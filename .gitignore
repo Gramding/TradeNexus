@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+*.spec
+node_modules/
+electron-dist/

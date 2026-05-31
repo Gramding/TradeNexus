@@ -1,0 +1,76 @@
+{
+  "name": "tradenexus",
+  "version": "1.0.0",
+  "description": "Stock trade and options tracker",
+  "author": "TradeNexus",
+  "main": "electron/main.js",
+  "scripts": {
+    "start":       "electron .",
+    "build":       "electron-builder",
+    "build:linux": "electron-builder --linux",
+    "build:win":   "electron-builder --win",
+    "build:mac":   "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron":         "^34.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId":       "com.tradenexus.app",
+    "productName": "TradeNexus",
+    "electronDist": "node_modules/electron/dist",
+
+    "directories": {
+      "output": "electron-dist"
+    },
+
+    "files": [
+      "electron/main.js",
+      "electron/preload.js",
+      "frontend/**/*"
+    ],
+
+    "extraResources": [
+      {
+        "from":   "dist/",
+        "to":     ".",
+        "filter": ["tradenexus", "tradenexus.exe"]
+      }
+    ],
+
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+
+    "nsis": {
+      "oneClick":                        false,
+      "perMachine":                      false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut":           true,
+      "createStartMenuShortcut":         true,
+      "shortcutName":                    "TradeNexus",
+      "installerSidebar":                null,
+      "uninstallDisplayName":            "TradeNexus"
+    },
+
+    "mac": {
+      "target":   [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+      "category": "public.app-category.finance",
+      "identity": null
+    },
+
+    "dmg": {
+      "title": "${productName} ${version}",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ],
+      "window": { "width": 540, "height": 380 }
+    },
+
+    "linux": {
+      "target":   [{ "target": "AppImage", "arch": ["x64"] }],
+      "category": "Finance"
+    }
+  }
+}
