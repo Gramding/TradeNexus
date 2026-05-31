@@ -223,6 +223,13 @@
             <div id="positions-cash-row">
               <span class="stat-label">Cash Balance</span>
               <span id="positions-cash-balance" class="cash-balance-value">—</span>
+              <button type="button" id="btn-add-cash" class="secondary">+ Add cash</button>
+              <form id="add-cash-form" class="add-cash-form hidden">
+                <input id="add-cash-amount" type="number" min="0.01" step="0.01" placeholder="Amount" />
+                <input id="add-cash-note" type="text" placeholder="Note (optional)" autocomplete="off" />
+                <button type="submit" id="btn-save-cash">Add</button>
+                <button type="button" id="btn-cancel-cash" class="secondary">Cancel</button>
+              </form>
             </div>
 
             <div id="positions-table-wrap">
@@ -659,6 +666,7 @@
           <div class="field">
             <label for="sell-price-input">Sell Price / Unit ($)</label>
             <input id="sell-price-input" type="number" min="0" step="any" placeholder="0.00" />
+            <span class="sell-current-price" id="sell-current-price"></span>
           </div>
           <div class="field">
             <label for="sell-date-input">Sell Date</label>

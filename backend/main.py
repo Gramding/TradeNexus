@@ -12,6 +12,7 @@ import datetime
 
 from db import get_connection
 from backup import run_startup_backup
+from init_db import ensure_initialized
 import brokers as brokers_module
 import prices as prices_module
 import settings as settings_module
@@ -19,10 +20,18 @@ import trade_types as trade_types_module
 
 logger = logging.getLogger(__name__)
 
+# Snapshot the existing database before any migration, then make sure the schema
+# and default settings/trade-types exist. On a fresh install this creates an empty
+# but fully working database (no users) — see ensure_initialized().
 try:
     run_startup_backup()
 except Exception:
     logger.exception("Startup backup failed; continuing without a backup")
+
+try:
+    ensure_initialized()
+except Exception:
+    logger.exception("Database initialization failed; the app may not work")
 
 app = FastAPI(title="TradeNexus")
 app.include_router(brokers_module.router)

@@ -7,6 +7,7 @@ Usage:
     .venv/bin/python build.py --test   # test only (executable must already exist)
 """
 
+import os
 import subprocess
 import sys
 import pathlib
@@ -80,6 +81,8 @@ def build():
         "--workpath", str(ROOT / "build"),
         "--specpath", str(ROOT),
         "--paths",    str(BACKEND),
+        # Bundle schema.sql so ensure_initialized() can create the DB on first run.
+        "--add-data", f"{BACKEND / 'schema.sql'}{os.pathsep}.",
     ]
     for mod in HIDDEN_IMPORTS:
         cmd += ["--hidden-import", mod]

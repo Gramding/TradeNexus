@@ -1,7 +1,11 @@
 import pathlib
+import sys
 from db import get_connection, DB_PATH
 
-SCHEMA = (pathlib.Path(__file__).parent / "schema.sql").read_text()
+# schema.sql lives beside this file in dev; in a PyInstaller bundle it is extracted
+# to sys._MEIPASS (added via --add-data in build.py).
+_SCHEMA_DIR = pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(__file__).parent))
+SCHEMA = (_SCHEMA_DIR / "schema.sql").read_text()
 
 SEED_USER = ("TradeNexus User", "user@tradenexus.local")
 
@@ -165,13 +169,18 @@ def _migrate(conn):
     _rebuild_trades_without_check(conn)
 
 
-def init():
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.executescript(SCHEMA)
-        _migrate(conn)
+def _bootstrap(conn, *, seed_demo_user: bool):
+    """Create the schema, run migrations, and seed defaults. Idempotent.
 
+    Default settings and trade types are always seeded (the app needs them to
+    function). The demo user is only seeded for development; a shipped app starts
+    with zero users so it is genuinely empty.
+    """
+    cur = conn.cursor()
+    cur.executescript(SCHEMA)
+    _migrate(conn)
+
+    if seed_demo_user:
         cur.execute("SELECT id FROM users WHERE email = ?", (SEED_USER[1],))
         if cur.fetchone() is None:
             cur.execute("INSERT INTO users (name, email) VALUES (?, ?)", SEED_USER)
@@ -180,27 +189,43 @@ def init():
         else:
             print("Test user already exists, skipping seed.")
 
-        # Insert default settings only for keys that are missing; never overwrite.
-        cur.executemany(
-            "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
-            SEED_SETTINGS,
-        )
-        if cur.rowcount:
-            print(f"Seeded {cur.rowcount} default app setting(s)")
-        conn.commit()
+    # Insert default settings only for keys that are missing; never overwrite.
+    cur.executemany(
+        "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
+        SEED_SETTINGS,
+    )
+    conn.commit()
 
-        # Seed trade types, then normalize existing trades to the canonical names
-        # so every trade matches a name in trade_types.
-        seed_trade_types(conn)
-        for canonical in ("Stock", "Call", "Put", "Other"):
-            cur.execute(
-                "UPDATE trades SET trade_type = ? WHERE LOWER(trade_type) = ?",
-                (canonical, canonical.lower()),
-            )
-        conn.commit()
+    # Seed trade types, then normalize existing trades to the canonical names
+    # so every trade matches a name in trade_types.
+    seed_trade_types(conn)
+    for canonical in ("Stock", "Call", "Put", "Other"):
+        cur.execute(
+            "UPDATE trades SET trade_type = ? WHERE LOWER(trade_type) = ?",
+            (canonical, canonical.lower()),
+        )
+    conn.commit()
+
+
+def ensure_initialized():
+    """Bring the database up to a working, EMPTY state (no demo user).
+
+    Safe to call on every app startup — it only creates what is missing.
+    """
+    conn = get_connection()
+    try:
+        _bootstrap(conn, seed_demo_user=False)
     finally:
         conn.close()
 
+
+def init():
+    """Full initializer for development / CLI use — also seeds a demo user."""
+    conn = get_connection()
+    try:
+        _bootstrap(conn, seed_demo_user=True)
+    finally:
+        conn.close()
     print(f"Database initialised at {DB_PATH}")
 
 

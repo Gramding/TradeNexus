@@ -131,12 +131,14 @@ python3 -m venv .venv
 
 > On Windows use `.venv\Scripts\python` and `.venv\Scripts\pip` in place of `.venv/bin/...`.
 
-### 2. Initialize the database
+### 2. Initialize the database (optional)
 
-The server does **not** create the schema automatically — run the initializer once. It creates `~/TradeTracker/trades.db`, applies migrations, and seeds default settings and trade types (it is safe to re-run; it never drops existing tables):
+The backend **auto-creates the database on first launch** — on startup it creates `~/TradeTracker/trades.db`, applies migrations, and seeds default settings and trade types. A fresh install therefore starts as an empty-but-working database with **no users**.
+
+You only need the initializer if you want a convenience **demo user** in development (it is safe to re-run; it never drops existing tables):
 
 ```bash
-.venv/bin/python backend/init_db.py
+.venv/bin/python backend/init_db.py     # creates schema + a demo user
 ```
 
 *(Optional)* To start with realistic demo data instead, see [Seeding mock data](#seeding-mock-data). **`seed.py` wipes existing data**, so only use it on a fresh/throwaway database.
@@ -196,6 +198,19 @@ Electron polls `/health` for up to 30 seconds before showing the window. If the 
 
 ---
 
+## Running tests
+
+The backend has a pytest suite that runs against a **throwaway SQLite database** in a temp directory — your real `~/TradeTracker/trades.db` is never touched, and the tests make no network calls.
+
+```bash
+.venv/bin/pip install -r backend/requirements-dev.txt   # pytest + httpx (one-time)
+.venv/bin/python -m pytest                               # run the suite
+```
+
+Coverage includes users, trades (creation/validation/filtering/update/delete), the sell flow (partial/full/oversell + cash effects), cash deposits/withdrawals, brokers & commissions, trade types (validation, rename-cascade, delete rules), settings validation, global search, stats / fiscal-year windowing, and the price cache. Tests live in `backend/tests/`.
+
+---
+
 ## Building a distributable app
 
 Building produces a self-contained installer/AppImage with the backend bundled inside — end users do **not** need Python or Node installed.
@@ -231,13 +246,13 @@ Output (per platform):
 npm run build:linux                  # electron-builder for one platform
 ```
 
-> **Note:** the packaged app expects an initialized database at `~/TradeTracker/trades.db`. Run `init_db.py` (or ship an initialized DB) before first launch.
+> **Note:** the packaged app creates its database automatically on first launch — no manual initialization or shipped database is required. It starts empty (no users).
 
 ---
 
 ## Data, backups & configuration
 
-- **Database:** `~/TradeTracker/trades.db` (SQLite). The parent folder is created automatically.
+- **Database location:** `~/TradeTracker/trades.db` (SQLite) — in the user's **home directory**, not inside the app bundle. `Path.home()` resolves per-OS: `/home/<user>` on Linux (including the AppImage), `/Users/<user>` on macOS, `C:\Users\<user>` on Windows. It is created automatically on first launch and **persists across app updates** (replacing the AppImage/installer never touches it). The path is fixed and not currently configurable.
 - **Backups:** on every startup the backend copies the DB to `~/TradeTracker/backups/trades_YYYY-MM-DD_HHMMSS.db`, keeping only the **7 most recent**. You can also download/restore a backup from **Settings → Data**.
 - **Settings** are stored in the `app_settings` table and edited in **Settings → General** (display name, currency, date format, decimal separator, price-refresh interval, fiscal-year start). They auto-save on change.
 - **Price cache:** Yahoo Finance quotes are cached in the `price_cache` table. Clear it from **Settings → Data** if prices look stale.
@@ -320,14 +335,14 @@ kill <PID>
 **`RuntimeError: Form data requires "python-multipart"`**
 The backup/restore upload needs `python-multipart`. Reinstall dependencies (`pip install -r backend/requirements.txt`) and rebuild the binary so PyInstaller bundles it.
 
-**Empty app / “no such table” errors**
-The database schema hasn't been created. Run `.venv/bin/python backend/init_db.py`.
+**“no such table” errors**
+The schema normally auto-creates on startup. If you see this, initialization failed (check the server logs) — you can recreate it manually with `.venv/bin/python backend/init_db.py`.
 
 **Prices show “—” / look stale**
 Live quotes require internet access. Use **Positions → Refresh prices**, or clear the cache from **Settings → Data**. Cached values are used when offline.
 
 **Reset everything**
-Delete `~/TradeTracker/trades.db` (and `~/TradeTracker/backups/`) and re-run `init_db.py`. A backup is taken automatically on each startup before any changes.
+Delete `~/TradeTracker/trades.db` (and `~/TradeTracker/backups/`). The app recreates an empty database on the next launch. A backup is taken automatically on each startup before any changes.
 
 ---
 

@@ -784,6 +784,17 @@ button.danger-solid:hover { background: #c44; }
   color: var(--green);
 }
 
+#btn-add-cash { margin-left: auto; padding: 5px 12px; font-size: 12px; }
+.add-cash-form {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.add-cash-form input[type="number"] { width: 120px; }
+.add-cash-form input[type="text"]   { width: 160px; }
+.add-cash-form button { padding: 5px 12px; font-size: 12px; }
+
 #positions-table-wrap { overflow-x: auto; }
 #positions-table {
   width: 100%;
@@ -922,6 +933,13 @@ button.sell-btn:hover { background: rgba(76,175,130,0.12); }
 }
 
 .sell-max-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+.sell-current-price {
+  display: block;
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 3px;

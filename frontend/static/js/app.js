@@ -237,6 +237,8 @@ function selectUser(u, li) {
   userPanelName.textContent  = u.name;
   userPanelEmail.textContent = u.email;
 
+  clearSearchInput();   // results are user-scoped — reset on user switch
+
   switchTab('trades');
 }
 
@@ -1052,6 +1054,51 @@ const positionsTbody       = document.getElementById('positions-tbody');
 const positionsEmpty       = document.getElementById('positions-empty');
 const positionsCashBalance = document.getElementById('positions-cash-balance');
 
+// ── Add cash (deposit) ──────────────────────────────────────────────────────────
+const btnAddCash    = document.getElementById('btn-add-cash');
+const addCashForm   = document.getElementById('add-cash-form');
+const addCashAmount = document.getElementById('add-cash-amount');
+const addCashNote   = document.getElementById('add-cash-note');
+
+function closeAddCashForm() {
+  addCashForm.classList.add('hidden');
+  btnAddCash.classList.remove('hidden');
+}
+
+btnAddCash.addEventListener('click', () => {
+  addCashForm.classList.remove('hidden');
+  btnAddCash.classList.add('hidden');
+  addCashAmount.value = '';
+  addCashNote.value = '';
+  addCashAmount.focus();
+});
+
+document.getElementById('btn-cancel-cash').addEventListener('click', closeAddCashForm);
+
+addCashForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!activeUserId) return;
+  const amount = parseFloat(addCashAmount.value);
+  if (!(amount > 0)) { showToast('Enter an amount greater than 0.', true); return; }
+
+  const saveBtn = document.getElementById('btn-save-cash');
+  saveBtn.disabled = true;
+  try {
+    const res = await apiFetch(`/users/${activeUserId}/cash/deposit`, {
+      method: 'POST',
+      body: JSON.stringify({ amount, note: addCashNote.value.trim() || null }),
+    });
+    positionsBalance = res.balance;
+    positionsCashBalance.textContent = formatCurrency(res.balance);
+    showToast(`Added ${formatCurrency(amount)} to cash.`);
+    closeAddCashForm();
+  } catch (err) {
+    showToast(err.message, true);
+  } finally {
+    saveBtn.disabled = false;
+  }
+});
+
 async function loadPositions() {
   if (!activeUserId) return;
 
@@ -1274,6 +1321,7 @@ const sellModalTypeBadge= document.getElementById('sell-modal-type-badge');
 const sellLotsTbody     = document.getElementById('sell-lots-tbody');
 const sellQtyInput      = document.getElementById('sell-qty-input');
 const sellPriceInput    = document.getElementById('sell-price-input');
+const sellCurrentPrice  = document.getElementById('sell-current-price');
 const sellDateInput     = document.getElementById('sell-date-input');
 const sellNotesInput    = document.getElementById('sell-notes-input');
 const sellPreviewBar    = document.getElementById('sell-preview-bar');
@@ -1310,9 +1358,18 @@ function openSellModal(position) {
   sellQtyInput.max   = maxQty;
   sellMaxHint.textContent = `max ${formatNumber(maxQty)}`;
   sellQtyInput.value  = '';
-  sellPriceInput.value = '';
   sellDateInput.value  = todayISO();
   sellNotesInput.value = '';
+
+  // Pre-fill the sell price with the current market price (editable), and show it
+  // as a hint. Falls back to blank when no price is available.
+  if (position.current_price != null) {
+    sellPriceInput.value = position.current_price;
+    sellCurrentPrice.textContent = `Current price: ${formatCurrency(position.current_price)}`;
+  } else {
+    sellPriceInput.value = '';
+    sellCurrentPrice.textContent = 'Current price unavailable';
+  }
 
   sellPreviewBar.className = 'sell-preview-bar hidden';
   clearError(sellErrorEl);
@@ -2386,6 +2443,9 @@ function closeSearch() {
   searchResults.classList.add('hidden');
 }
 function clearSearchInput() {
+  clearTimeout(searchDebounce);   // cancel a queued search
+  searchSeq++;                    // invalidate any in-flight response
+  lastSearchData = null;
   searchInput.value = '';
   searchSpinner.classList.add('hidden');
   searchResults.innerHTML = '';
