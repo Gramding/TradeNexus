@@ -248,6 +248,22 @@ npm run build:linux                  # electron-builder for one platform
 
 > **Note:** the packaged app creates its database automatically on first launch — no manual initialization or shipped database is required. It starts empty (no users).
 
+### Releasing all three platforms at once (CI)
+
+`build-all.sh` only builds for the OS you run it on — **a single machine cannot produce working builds for all three platforms**, because the backend is a PyInstaller binary (host-native, not cross-compilable) and macOS builds require macOS.
+
+To build Linux + macOS + Windows together for a release, use the GitHub Actions workflow at [`.github/workflows/release.yml`](.github/workflows/release.yml). It builds each platform on its own native runner:
+
+- **Tagged release:** push a version tag and CI builds all three and attaches them to a GitHub Release.
+  ```bash
+  # bump "version" in package.json first, then:
+  git tag v1.0.0
+  git push origin v1.0.0
+  ```
+- **Ad-hoc:** trigger it manually from the repo's **Actions → Build release → Run workflow**, then download the installers from the run's **Artifacts**.
+
+The installers are **unsigned** (no code-signing identity configured), so on first launch Windows SmartScreen and macOS Gatekeeper will warn the user. Proper signing/notarization removes those warnings but requires paid certificates.
+
 ---
 
 ## Data, backups & configuration

@@ -10,6 +10,11 @@
 #   ./build-all.sh --mac
 #   ./build-all.sh --win
 #
+# This builds ONLY for the OS it runs on. A single machine cannot build all three
+# platforms (the backend is a host-native PyInstaller binary; macOS needs macOS).
+# To build Linux + macOS + Windows together for a release, push a "v*" tag and let
+# CI do it: .github/workflows/release.yml  (each OS builds on its own runner).
+#
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"

@@ -1,4 +1,5 @@
-# Development / test dependencies (not bundled into the packaged app).
+# Development / test / build dependencies (not bundled into the packaged app).
 -r requirements.txt
 pytest==8.3.4
 httpx==0.28.1
+pyinstaller==6.20.0   # builds the backend into a single binary (build.py)
