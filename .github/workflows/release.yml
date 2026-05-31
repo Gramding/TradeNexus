@@ -21,6 +21,8 @@ jobs:
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      PYTHONUTF8: "1"   # avoid cp1252 UnicodeEncodeError in Python output on Windows
     strategy:
       fail-fast: false
       matrix:
@@ -58,7 +60,10 @@ jobs:
         run: npm ci
 
       - name: Package app (electron-builder)
-        run: npm run ${{ matrix.target }}
+        # --publish never: just build the installer. Publishing to the GitHub
+        # Release is handled by the dedicated step below (electron-builder's own
+        # publisher would otherwise demand a GH_TOKEN and fail).
+        run: npm run ${{ matrix.target }} -- --publish never
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

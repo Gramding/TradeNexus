@@ -72,7 +72,7 @@ COLLECT_ALL = [
 
 
 def build():
-    print("Building TradeNexus executable …")
+    print("Building TradeNexus executable ...")
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",
@@ -91,14 +91,14 @@ def build():
     cmd.append(str(BACKEND / "entrypoint.py"))
 
     subprocess.run(cmd, check=True)
-    print(f"\nBuild complete → {EXE}")
+    print(f"\nBuild complete -> {EXE}")
 
 
 def test():
     if not EXE.exists():
         sys.exit(f"Executable not found: {EXE}  (run build first)")
 
-    print(f"\nStarting {EXE} …")
+    print(f"\nStarting {EXE} ...")
     proc = subprocess.Popen(
         [str(EXE)],
         stdout=subprocess.PIPE,
@@ -115,7 +115,7 @@ def test():
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:
                 body = resp.read().decode()
-            print(f"GET /users → {resp.status}  {body[:120]}")
+            print(f"GET /users -> {resp.status}  {body[:120]}")
             connected = True
             break
         except urllib.error.URLError:
