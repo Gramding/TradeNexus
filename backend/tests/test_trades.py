@@ -36,8 +36,10 @@ def test_invalid_action_and_quantity(client, user_id):
 def test_filter_by_trade_type_case_insensitive(client, user_id):
     make_trade(client, user_id, ticker="AAPL", trade_type="stock")
     make_trade(client, user_id, ticker="SPY", trade_type="call")
-    rows = client.get(f"/users/{user_id}/trades", params={"trade_type": "stock"}).json()
+    body = client.get(f"/users/{user_id}/trades", params={"trade_type": "stock"}).json()
+    rows = body["trades"]
     assert len(rows) == 1
+    assert body["total_count"] == 1
     assert rows[0]["trade_type"] == "Stock"
 
 
@@ -55,3 +57,33 @@ def test_delete_trade(client, user_id):
     t = make_trade(client, user_id)
     assert client.delete(f"/trades/{t['id']}").status_code == 200
     assert client.delete(f"/trades/{t['id']}").status_code == 404
+
+
+def test_filter_by_date_range(client, user_id):
+    make_trade(client, user_id, ticker="AAA", trade_date="2024-06-15")
+    make_trade(client, user_id, ticker="BBB", trade_date="2025-03-10")
+    make_trade(client, user_id, ticker="CCC", trade_date="2026-01-20")
+
+    # date_from + date_to (inclusive range) -> only the 2025 trade.
+    body = client.get(f"/users/{user_id}/trades",
+                      params={"date_from": "2025-01-01", "date_to": "2025-12-31"}).json()
+    assert body["total_count"] == 1
+    assert [t["ticker"] for t in body["trades"]] == ["BBB"]
+
+    # date_from only -> 2025 and 2026 trades.
+    body = client.get(f"/users/{user_id}/trades",
+                      params={"date_from": "2025-01-01"}).json()
+    assert body["total_count"] == 2
+
+    # date_to is inclusive of the exact day.
+    body = client.get(f"/users/{user_id}/trades",
+                      params={"date_to": "2024-06-15"}).json()
+    assert body["total_count"] == 1
+    assert body["trades"][0]["ticker"] == "AAA"
+
+
+def test_invalid_date_filter_rejected(client, user_id):
+    assert client.get(f"/users/{user_id}/trades",
+                      params={"date_from": "06/15/2024"}).status_code == 400
+    assert client.get(f"/users/{user_id}/trades",
+                      params={"date_to": "not-a-date"}).status_code == 400

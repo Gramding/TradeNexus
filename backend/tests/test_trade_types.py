@@ -40,7 +40,7 @@ def test_rename_cascades_to_trades(client, user_id):
     assert r.status_code == 200
     assert r.json()["trades_updated"] == 1
 
-    rows = client.get(f"/users/{user_id}/trades").json()
+    rows = client.get(f"/users/{user_id}/trades").json()["trades"]
     assert rows[0]["trade_type"] == "Bonds"
 
 

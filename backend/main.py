@@ -1,7 +1,10 @@
+import base64
 import csv
 import io
+import json
 import logging
 import sqlite3
+import time
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -16,6 +19,7 @@ from init_db import ensure_initialized
 import brokers as brokers_module
 import prices as prices_module
 import settings as settings_module
+import stats_cache
 import trade_types as trade_types_module
 
 logger = logging.getLogger(__name__)
@@ -93,6 +97,16 @@ def _db() -> sqlite3.Connection:
         raise HTTPException(status_code=503, detail="Could not open the database.")
 
 
+def _validate_iso_date(value, field: str):
+    """Return a normalized ISO date string, None for empty, or raise 400 if invalid."""
+    if value is None or value == "":
+        return None
+    try:
+        return datetime.date.fromisoformat(value).isoformat()
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"{field} must be an ISO date (YYYY-MM-DD).")
+
+
 # Reusable SELECT that joins broker name + color; used by list/create/update trade routes.
 # Columns: 0=id 1=user_id 2=ticker 3=trade_type 4=action 5=quantity
 #          6=price_per_unit 7=total_value 8=trade_date 9=notes 10=created_at
@@ -105,6 +119,47 @@ _TRADE_SELECT = (
     "t.commission, t.net_total_value "
     "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id"
 )
+
+
+# Sort fields the paginated trades endpoint accepts -> their SQL column.
+_TRADE_SORT_COLUMNS = {
+    "trade_date":     "t.trade_date",
+    "ticker":         "t.ticker",
+    "total_value":    "t.total_value",
+    "price_per_unit": "t.price_per_unit",
+    "quantity":       "t.quantity",
+}
+
+# In-memory cache of total_count per (user_id, filter) for 30s, so paging through
+# results doesn't re-run COUNT(*) on every request.
+_COUNT_CACHE: dict = {}
+_COUNT_CACHE_TTL = 30.0
+
+
+def _encode_cursor(last_val, last_id: int) -> str:
+    """base64(JSON) of the last row's sort value + id — opaque keyset cursor."""
+    raw = json.dumps({"last_val": last_val, "last_id": last_id}).encode()
+    return base64.urlsafe_b64encode(raw).decode()
+
+
+def _decode_cursor(cursor: str):
+    """Return (last_val, last_id) from an opaque cursor, or 400 if it's malformed."""
+    try:
+        data = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+        return data["last_val"], int(data["last_id"])
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid cursor.")
+
+
+def _cached_total_count(conn, cache_key, where_sql: str, params: list) -> int:
+    """COUNT(*) of matching trades, cached per cache_key for _COUNT_CACHE_TTL seconds."""
+    now = time.monotonic()
+    cached = _COUNT_CACHE.get(cache_key)
+    if cached is not None and now - cached[0] < _COUNT_CACHE_TTL:
+        return cached[1]
+    count = conn.execute("SELECT COUNT(*) FROM trades t" + where_sql, params).fetchone()[0]
+    _COUNT_CACHE[cache_key] = (now, count)
+    return count
 
 
 def _row_to_trade(r) -> dict:
@@ -311,6 +366,7 @@ def delete_user(user_id: int):
         cur.execute("DELETE FROM trades    WHERE user_id = ?", (user_id,))
         cur.execute("DELETE FROM users     WHERE id      = ?", (user_id,))
         conn.commit()
+        stats_cache.invalidate(user_id)
     except HTTPException:
         raise
     except sqlite3.Error as exc:
@@ -330,31 +386,89 @@ def delete_user(user_id: int):
 @app.get("/users/{user_id}/trades")
 def list_trades(
     user_id: int,
+    limit: int = Query(100, ge=1, le=100),
+    cursor: Optional[str] = Query(None),
     ticker: Optional[str] = Query(None),
     trade_type: Optional[str] = Query(None),
     action: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    sort_by: str = Query("trade_date"),
+    sort_dir: str = Query("desc"),
 ):
+    # trade_date is stored as an ISO 'YYYY-MM-DD' string, so range filters are
+    # plain string comparisons. Validate the inputs so a bad value is a clean 400.
+    date_from = _validate_iso_date(date_from, "date_from")
+    date_to = _validate_iso_date(date_to, "date_to")
+
+    if sort_by not in _TRADE_SORT_COLUMNS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"sort_by must be one of: {', '.join(sorted(_TRADE_SORT_COLUMNS))}.",
+        )
+    if sort_dir not in ("asc", "desc"):
+        raise HTTPException(status_code=422, detail="sort_dir must be 'asc' or 'desc'.")
+
+    sort_col = _TRADE_SORT_COLUMNS[sort_by]
+
+    # WHERE clause + params shared by the data query and the COUNT query (filters
+    # only — the keyset cursor condition is appended to the data query alone).
+    where_sql = " WHERE t.user_id = ?"
+    filter_params: list = [user_id]
+    if ticker:
+        where_sql += " AND UPPER(t.ticker) = UPPER(?)"
+        filter_params.append(ticker)
+    if trade_type:
+        where_sql += " AND LOWER(t.trade_type) = LOWER(?)"
+        filter_params.append(trade_type)
+    if action:
+        where_sql += " AND t.action = ?"
+        filter_params.append(action)
+    if status:
+        where_sql += " AND t.status = ?"
+        filter_params.append(status)
+    if date_from:
+        where_sql += " AND t.trade_date >= ?"
+        filter_params.append(date_from)
+    if date_to:
+        where_sql += " AND t.trade_date <= ?"
+        filter_params.append(date_to)
+
+    # Cache key is the filter set only — independent of sort, cursor, and limit.
+    cache_key = (
+        user_id,
+        ticker.upper() if ticker else None,
+        trade_type.lower() if trade_type else None,
+        action,
+        status,
+        date_from,
+        date_to,
+    )
+
     conn = _db()
     try:
         cur = conn.cursor()
         _require_user(cur, user_id)
 
-        query = _TRADE_SELECT + " WHERE t.user_id = ?"
-        params: list = [user_id]
+        query = _TRADE_SELECT + where_sql
+        params = list(filter_params)
 
-        if ticker:
-            query += " AND UPPER(t.ticker) = UPPER(?)"
-            params.append(ticker)
-        if trade_type:
-            query += " AND LOWER(t.trade_type) = LOWER(?)"
-            params.append(trade_type)
-        if action:
-            query += " AND t.action = ?"
-            params.append(action)
+        # Keyset pagination: rows strictly after the cursor in the sort order.
+        if cursor is not None:
+            last_val, last_id = _decode_cursor(cursor)
+            op = "<" if sort_dir == "desc" else ">"
+            query += f" AND ({sort_col}, t.id) {op} (?, ?)"
+            params.extend([last_val, last_id])
 
-        query += " ORDER BY t.trade_date DESC, t.id DESC"
+        direction = "DESC" if sort_dir == "desc" else "ASC"
+        # Fetch one extra row to detect whether another page exists.
+        query += f" ORDER BY {sort_col} {direction}, t.id {direction} LIMIT ?"
+        params.append(limit + 1)
+
         cur.execute(query, params)
         rows = cur.fetchall()
+        total_count = _cached_total_count(conn, cache_key, where_sql, filter_params)
     except HTTPException:
         raise
     except sqlite3.Error as exc:
@@ -363,7 +477,21 @@ def list_trades(
     finally:
         conn.close()
 
-    return [_row_to_trade(r) for r in rows]
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    trades = [_row_to_trade(r) for r in rows]
+
+    next_cursor = None
+    if has_more and trades:
+        last = trades[-1]
+        next_cursor = _encode_cursor(last[sort_by], last["id"])
+
+    return {
+        "trades": trades,
+        "total_count": int(total_count),
+        "has_more": has_more,
+        "next_cursor": next_cursor,
+    }
 
 
 @app.post("/users/{user_id}/trades", status_code=201)
@@ -414,6 +542,7 @@ def create_trade(user_id: int, body: TradeCreate):
             )
 
         conn.commit()
+        stats_cache.invalidate(user_id)
         cur.execute(_TRADE_SELECT + " WHERE t.id = ?", (trade_id,))
         row = cur.fetchone()
     except HTTPException:
@@ -475,6 +604,7 @@ def update_trade(trade_id: int, body: TradeUpdate):
              commission, net_total_value, trade_id),
         )
         conn.commit()
+        stats_cache.invalidate(existing[1])
         cur.execute(_TRADE_SELECT + " WHERE t.id = ?", (trade_id,))
         row = cur.fetchone()
     except HTTPException:
@@ -494,9 +624,36 @@ def delete_trade(trade_id: int):
     conn = _db()
     try:
         cur = conn.cursor()
-        _require_trade(cur, trade_id)
+        existing = _require_trade(cur, trade_id)
+
+        # Remove dependent rows before the trade itself, so the sell_lots -> trades
+        # foreign key doesn't block the delete, and reverse this trade's cash-pool
+        # effects so the balance stays correct.
+        sell_lot_ids = [
+            r[0] for r in cur.execute(
+                "SELECT id FROM sell_lots WHERE buy_trade_id = ?", (trade_id,)
+            ).fetchall()
+        ]
+        if sell_lot_ids:
+            placeholders = ",".join("?" * len(sell_lot_ids))
+            # sell_proceeds cash rows reference the sell_lot id.
+            cur.execute(
+                f"DELETE FROM cash_pool WHERE transaction_type = 'sell_proceeds' "
+                f"AND reference_id IN ({placeholders})",
+                sell_lot_ids,
+            )
+            cur.execute("DELETE FROM sell_lots WHERE buy_trade_id = ?", (trade_id,))
+
+        # The buy's cash deduction references the trade id (no-op for sell rows).
+        cur.execute(
+            "DELETE FROM cash_pool WHERE transaction_type = 'buy_deduction' "
+            "AND reference_id = ?",
+            (trade_id,),
+        )
+
         cur.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
         conn.commit()
+        stats_cache.invalidate(existing[1])
     except HTTPException:
         raise
     except sqlite3.Error as exc:
@@ -605,6 +762,7 @@ def sell_trade(buy_trade_id: int, body: SellLotCreate):
         )
 
         conn.commit()
+        stats_cache.invalidate(trade[1])
 
         cur.execute(
             "SELECT id, buy_trade_id, sell_date, quantity_sold, sell_price_per_unit, "
@@ -704,17 +862,44 @@ def _get_balance(cur: sqlite3.Cursor, user_id: int) -> float:
 
 
 @app.get("/users/{user_id}/cash")
-def get_cash(user_id: int):
+def get_cash(
+    user_id: int,
+    limit: int = Query(50, ge=1, le=100),
+    cursor: Optional[str] = Query(None),
+    transaction_type: Optional[str] = Query(None),
+):
+    # Shared filter clause for the page query and the COUNT query.
+    where_sql = " WHERE user_id = ?"
+    filter_params: list = [user_id]
+    if transaction_type:
+        where_sql += " AND transaction_type = ?"
+        filter_params.append(transaction_type)
+
     conn = _db()
     try:
         cur = conn.cursor()
         _require_user(cur, user_id)
+
+        # Balance is always the SUM over ALL rows, independent of filter/paging.
         balance = _get_balance(cur, user_id)
-        cur.execute(
+
+        total_count = cur.execute(
+            "SELECT COUNT(*) FROM cash_pool" + where_sql, filter_params
+        ).fetchone()[0]
+
+        query = (
             "SELECT id, transaction_type, amount, note, created_at, reference_id "
-            "FROM cash_pool WHERE user_id = ? ORDER BY created_at DESC, id DESC",
-            (user_id,),
+            "FROM cash_pool" + where_sql
         )
+        params = list(filter_params)
+        if cursor is not None:
+            last_val, last_id = _decode_cursor(cursor)
+            query += " AND (created_at, id) < (?, ?)"
+            params.extend([last_val, last_id])
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(limit + 1)
+
+        cur.execute(query, params)
         rows = cur.fetchall()
     except HTTPException:
         raise
@@ -724,19 +909,31 @@ def get_cash(user_id: int):
     finally:
         conn.close()
 
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    transactions = [
+        {
+            "id": r[0],
+            "transaction_type": r[1],
+            "amount": float(r[2]),
+            "note": r[3],
+            "created_at": r[4],
+            "reference_id": r[5],
+        }
+        for r in rows
+    ]
+
+    next_cursor = None
+    if has_more and transactions:
+        last = transactions[-1]
+        next_cursor = _encode_cursor(last["created_at"], last["id"])
+
     return {
         "balance": balance,
-        "transactions": [
-            {
-                "id": r[0],
-                "transaction_type": r[1],
-                "amount": float(r[2]),
-                "note": r[3],
-                "created_at": r[4],
-                "reference_id": r[5],
-            }
-            for r in rows
-        ],
+        "transactions": transactions,
+        "total_count": int(total_count),
+        "has_more": has_more,
+        "next_cursor": next_cursor,
     }
 
 
@@ -847,11 +1044,158 @@ def export_trades(user_id: int):
 # Search
 # ---------------------------------------------------------------------------
 
+# Each search bucket returns at most this many results per page.
+_SEARCH_LIMIT = 20
+
+
+def _bucket(results: list, has_more: bool, next_cursor) -> dict:
+    return {"results": results, "has_more": has_more, "next_cursor": next_cursor}
+
+
+def _search_trades_bucket(cur, user_id, like, cursor) -> dict:
+    """Trades whose ticker / notes / trade_type / broker name match, newest first."""
+    sql = (
+        "SELECT t.id, t.user_id, t.ticker, t.trade_type, t.action, t.quantity, "
+        "t.price_per_unit, t.trade_date, t.status, b.name "
+        "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
+        "WHERE t.user_id = ? AND ("
+        "t.ticker LIKE ? OR t.notes LIKE ? OR t.trade_type LIKE ? OR b.name LIKE ?)"
+    )
+    params = [user_id, like, like, like, like]
+    if cursor is not None:
+        last_val, last_id = _decode_cursor(cursor)
+        sql += " AND (t.trade_date, t.id) < (?, ?)"
+        params.extend([last_val, last_id])
+    sql += " ORDER BY t.trade_date DESC, t.id DESC LIMIT ?"
+    params.append(_SEARCH_LIMIT + 1)
+
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+    has_more = len(rows) > _SEARCH_LIMIT
+    rows = rows[:_SEARCH_LIMIT]
+    results = [
+        {
+            "trade_id":       r[0],
+            "user_id":        r[1],
+            "ticker":         r[2],
+            "trade_type":     r[3],
+            "action":         r[4],
+            "quantity":       float(r[5]),
+            "price_per_unit": float(r[6]),
+            "trade_date":     r[7],
+            "status":         r[8],
+            "broker_name":    r[9],
+        }
+        for r in rows
+    ]
+    next_cursor = (
+        _encode_cursor(results[-1]["trade_date"], results[-1]["trade_id"])
+        if has_more and results else None
+    )
+    return _bucket(results, has_more, next_cursor)
+
+
+def _search_positions_bucket(cur, user_id, like, cursor) -> dict:
+    """Open/partial buy lots whose ticker matches, grouped by ticker (A-Z).
+
+    Positions are aggregates with no row id, so the keyset runs on ticker alone;
+    the cursor stores the last ticker in last_val (last_id is unused, set to 0)."""
+    sql = (
+        "SELECT ticker, trade_type, "
+        "SUM(remaining_quantity) AS rem, "
+        "SUM(remaining_quantity * price_per_unit) AS basis "
+        "FROM trades "
+        "WHERE user_id = ? AND action = 'buy' AND status IN ('open', 'partial') "
+        "AND ticker LIKE ?"
+    )
+    params = [user_id, like]
+    if cursor is not None:
+        last_val, _ = _decode_cursor(cursor)
+        sql += " AND ticker > ?"
+        params.append(last_val)
+    sql += " GROUP BY ticker ORDER BY ticker ASC LIMIT ?"
+    params.append(_SEARCH_LIMIT + 1)
+
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+    has_more = len(rows) > _SEARCH_LIMIT
+    rows = rows[:_SEARCH_LIMIT]
+    results = []
+    for r in rows:
+        rem = float(r[2] or 0)
+        basis = float(r[3] or 0)
+        results.append({
+            "ticker":                   r[0],
+            "trade_type":               r[1],
+            "total_remaining_quantity": round(rem, 10),
+            "avg_cost_per_unit":        round(basis / rem, 10) if rem else 0.0,
+            "total_cost_basis":         round(basis, 10),
+        })
+    next_cursor = (
+        _encode_cursor(results[-1]["ticker"], 0) if has_more and results else None
+    )
+    return _bucket(results, has_more, next_cursor)
+
+
+def _search_cash_bucket(cur, user_id, like, cursor) -> dict:
+    """Cash transactions whose note / transaction_type match, newest first."""
+    sql = (
+        "SELECT id, user_id, transaction_type, amount, note, created_at "
+        "FROM cash_pool "
+        "WHERE user_id = ? AND (note LIKE ? OR transaction_type LIKE ?)"
+    )
+    params = [user_id, like, like]
+    if cursor is not None:
+        last_val, last_id = _decode_cursor(cursor)
+        sql += " AND (created_at, id) < (?, ?)"
+        params.extend([last_val, last_id])
+    sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
+    params.append(_SEARCH_LIMIT + 1)
+
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+    has_more = len(rows) > _SEARCH_LIMIT
+    rows = rows[:_SEARCH_LIMIT]
+    results = [
+        {
+            "id":               r[0],
+            "user_id":          r[1],
+            "transaction_type": r[2],
+            "amount":           float(r[3]),
+            "note":             r[4],
+            "created_at":       r[5],
+        }
+        for r in rows
+    ]
+    next_cursor = (
+        _encode_cursor(results[-1]["created_at"], results[-1]["id"])
+        if has_more and results else None
+    )
+    return _bucket(results, has_more, next_cursor)
+
+
+_SEARCH_BUCKETS = {
+    "trades": _search_trades_bucket,
+    "positions": _search_positions_bucket,
+    "cash_transactions": _search_cash_bucket,
+}
+
+
 @app.get("/search")
-def search(user_id: int, q: str = Query(...)):
+def search(
+    user_id: int,
+    q: str = Query(...),
+    type: Optional[str] = Query(None),
+    cursor: Optional[str] = Query(None),
+):
     term = (q or "").strip()
     if len(term) < 2:
         raise HTTPException(status_code=400, detail="q must be at least 2 characters.")
+    if type is not None and type not in _SEARCH_BUCKETS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"type must be one of: {', '.join(sorted(_SEARCH_BUCKETS))}.",
+        )
     like = f"%{term}%"
 
     conn = _db()
@@ -859,75 +1203,15 @@ def search(user_id: int, q: str = Query(...)):
         cur = conn.cursor()
         _require_user(cur, user_id)
 
-        # Trades: ticker / notes / trade_type / broker name match, newest first.
-        cur.execute(
-            "SELECT t.id, t.user_id, t.ticker, t.trade_type, t.action, t.quantity, "
-            "t.price_per_unit, t.trade_date, t.status, b.name "
-            "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
-            "WHERE t.user_id = ? AND ("
-            "t.ticker LIKE ? OR t.notes LIKE ? OR t.trade_type LIKE ? OR b.name LIKE ?) "
-            "ORDER BY t.trade_date DESC, t.id DESC LIMIT 20",
-            (user_id, like, like, like, like),
-        )
-        trades = [
-            {
-                "trade_id":       r[0],
-                "user_id":        r[1],
-                "ticker":         r[2],
-                "trade_type":     r[3],
-                "action":         r[4],
-                "quantity":       float(r[5]),
-                "price_per_unit": float(r[6]),
-                "trade_date":     r[7],
-                "status":         r[8],
-                "broker_name":    r[9],
-            }
-            for r in cur.fetchall()
-        ]
+        if type is not None:
+            # Fetch (more of) a single bucket — powers "View all X results".
+            return {type: _SEARCH_BUCKETS[type](cur, user_id, like, cursor)}
 
-        # Positions: open/partial buy lots whose ticker matches, grouped by ticker.
-        cur.execute(
-            "SELECT ticker, trade_type, "
-            "SUM(remaining_quantity) AS rem, "
-            "SUM(remaining_quantity * price_per_unit) AS basis "
-            "FROM trades "
-            "WHERE user_id = ? AND action = 'buy' AND status IN ('open', 'partial') "
-            "AND ticker LIKE ? "
-            "GROUP BY ticker "
-            "ORDER BY ticker LIMIT 10",
-            (user_id, like),
-        )
-        positions = []
-        for r in cur.fetchall():
-            rem = float(r[2] or 0)
-            basis = float(r[3] or 0)
-            positions.append({
-                "ticker":                   r[0],
-                "trade_type":               r[1],
-                "total_remaining_quantity": round(rem, 10),
-                "avg_cost_per_unit":        round(basis / rem, 10) if rem else 0.0,
-                "total_cost_basis":         round(basis, 10),
-            })
-
-        # Cash transactions: note / transaction_type match, newest first.
-        cur.execute(
-            "SELECT id, user_id, transaction_type, amount, note, created_at "
-            "FROM cash_pool "
-            "WHERE user_id = ? AND (note LIKE ? OR transaction_type LIKE ?) "
-            "ORDER BY created_at DESC, id DESC LIMIT 10",
-            (user_id, like, like),
-        )
-        cash_transactions = [
-            {
-                "id":               r[0],
-                "user_id":          r[1],
-                "transaction_type": r[2],
-                "amount":           float(r[3]),
-                "note":             r[4],
-                "created_at":       r[5],
-            }
-            for r in cur.fetchall()
-        ]
+        # Default: first page of every bucket.
+        return {
+            name: build(cur, user_id, like, None)
+            for name, build in _SEARCH_BUCKETS.items()
+        }
     except HTTPException:
         raise
     except sqlite3.Error as exc:
@@ -935,12 +1219,6 @@ def search(user_id: int, q: str = Query(...)):
         raise HTTPException(status_code=500, detail="Search failed.")
     finally:
         conn.close()
-
-    return {
-        "trades": trades,
-        "positions": positions,
-        "cash_transactions": cash_transactions,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -966,6 +1244,15 @@ def get_user_stats(
     user_id: int,
     fiscal_year_start_month: Optional[int] = Query(None, ge=1, le=12),
 ):
+    # Only the default request (no explicit fiscal month) is cached; a cache hit
+    # serves instantly without touching the database. An explicit override is
+    # computed fresh and never read from or written to the cache.
+    use_cache = fiscal_year_start_month is None
+    if use_cache:
+        cached = stats_cache.get_stats(user_id)
+        if cached is not None:
+            return cached
+
     conn = _db()
     try:
         cur = conn.cursor()
@@ -982,19 +1269,26 @@ def get_user_stats(
         fy_start = datetime.date(fy_year, fiscal_year_start_month, 1)
         fy_end = datetime.date(fy_year + 1, fiscal_year_start_month, 1)
 
-        # Use net_total_value (commission-adjusted) for all value aggregations,
-        # falling back to total_value for any legacy row where it is NULL.
+        # Each metric is its own focused query — SQLite plans small targeted
+        # queries better than one big multi-aggregate scan. Value aggregations use
+        # net_total_value (commission-adjusted), falling back to total_value for any
+        # legacy row where it is NULL.
+        cur.execute("SELECT COUNT(*) FROM trades WHERE user_id = ?", (user_id,))
+        total_trades = cur.fetchone()[0]
+
         cur.execute(
-            """
-            SELECT
-                COUNT(*),
-                COALESCE(SUM(CASE WHEN action = 'buy'  THEN COALESCE(net_total_value, total_value) ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN action = 'sell' THEN COALESCE(net_total_value, total_value) ELSE 0 END), 0)
-            FROM trades WHERE user_id = ?
-            """,
+            "SELECT COALESCE(SUM(COALESCE(net_total_value, total_value)), 0) "
+            "FROM trades WHERE user_id = ? AND action = 'buy'",
             (user_id,),
         )
-        total_trades, buy_volume, sell_volume = cur.fetchone()
+        buy_volume = cur.fetchone()[0]
+
+        cur.execute(
+            "SELECT COALESCE(SUM(COALESCE(net_total_value, total_value)), 0) "
+            "FROM trades WHERE user_id = ? AND action = 'sell'",
+            (user_id,),
+        )
+        sell_volume = cur.fetchone()[0]
 
         cur.execute(
             "SELECT ticker FROM trades WHERE user_id = ? "
@@ -1060,7 +1354,7 @@ def get_user_stats(
     finally:
         conn.close()
 
-    return {
+    result = {
         "total_trades":       int(total_trades),
         "buy_volume":         float(buy_volume),
         "sell_volume":        float(sell_volume),
@@ -1078,7 +1372,12 @@ def get_user_stats(
             {"month": r[0], "volume": float(r[1])}
             for r in monthly_rows
         ],
+        "last_computed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
     }
+
+    if use_cache:
+        stats_cache.set_stats(user_id, result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1086,76 +1385,109 @@ def get_user_stats(
 # ---------------------------------------------------------------------------
 
 @app.get("/users/{user_id}/stats/growth")
-def get_user_growth(user_id: int):
-    conn = _db()
-    try:
-        cur = conn.cursor()
-        _require_user(cur, user_id)
+def get_user_growth(
+    user_id: int,
+    date_from: Optional[str] = Query(
+        None,
+        description="ISO date; omit for the last year, pass '' for all history.",
+    ),
+):
+    # Resolve the window:
+    #   param omitted  -> default first-load view of the last year
+    #   param == ''    -> everything (the "All" button)
+    #   ISO date       -> only points on/after that date
+    if date_from is None:
+        cutoff = (datetime.date.today() - datetime.timedelta(days=365)).isoformat()
+    elif date_from == "":
+        cutoff = None
+    else:
+        try:
+            cutoff = datetime.date.fromisoformat(date_from).isoformat()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="date_from must be an ISO date (YYYY-MM-DD).")
 
-        cur.execute(
-            """
-            WITH event_dates AS (
-                -- Every day a buy trade was entered
-                SELECT DISTINCT trade_date AS date
-                FROM   trades
-                WHERE  user_id = ? AND action = 'buy'
-                UNION
-                -- Every day a sell lot was recorded (affects both cost_basis and realized_pnl)
-                SELECT DISTINCT sl.sell_date AS date
-                FROM   sell_lots sl
-                JOIN   trades    t  ON sl.buy_trade_id = t.id
-                WHERE  t.user_id = ?
+    # The full (unfiltered) growth series is cached per user; date_from only slices
+    # it in Python, so changing the window never re-runs the aggregation.
+    full = stats_cache.get_growth(user_id)
+    if full is None:
+        conn = _db()
+        try:
+            cur = conn.cursor()
+            _require_user(cur, user_id)
+
+            # Restructured so each user's buy trades and sell lots are filtered into
+            # a CTE first; the correlated date-cutoff aggregates then run over those
+            # small per-user sets instead of re-scanning all trades with a user_id
+            # predicate four times.
+            cur.execute(
+                """
+                WITH user_buys AS (
+                    SELECT trade_date, remaining_quantity, net_total_value,
+                           total_value, commission, quantity, status
+                    FROM   trades
+                    WHERE  user_id = ? AND action = 'buy'
+                ),
+                user_sells AS (
+                    SELECT sl.sell_date AS sell_date, sl.realized_pnl AS realized_pnl
+                    FROM   sell_lots sl
+                    JOIN   trades    t ON sl.buy_trade_id = t.id
+                    WHERE  t.user_id = ?
+                ),
+                event_dates AS (
+                    -- Every day something changed: a buy was entered or a sell recorded.
+                    SELECT DISTINCT trade_date AS date FROM user_buys
+                    UNION
+                    SELECT DISTINCT sell_date  AS date FROM user_sells
+                )
+                SELECT
+                    ed.date,
+
+                    -- Cost basis: unrealised value of all open/partial buy lots entered
+                    -- on or before this date, scaled by current remaining_quantity.
+                    COALESCE((
+                        SELECT SUM(
+                            b.remaining_quantity
+                            * COALESCE(b.net_total_value, b.total_value + b.commission)
+                            / NULLIF(b.quantity, 0)
+                        )
+                        FROM   user_buys b
+                        WHERE  b.status     IN ('open', 'partial')
+                          AND  b.trade_date <= ed.date
+                    ), 0.0) AS cost_basis,
+
+                    -- Realised P&L: running total of sell lots closed on or before this
+                    -- date (realized_pnl is already commission-adjusted at write time).
+                    COALESCE((
+                        SELECT SUM(s.realized_pnl)
+                        FROM   user_sells s
+                        WHERE  s.sell_date <= ed.date
+                    ), 0.0) AS realized_pnl
+
+                FROM  event_dates ed
+                ORDER BY ed.date
+                """,
+                (user_id, user_id),
             )
-            SELECT
-                ed.date,
+            rows = cur.fetchall()
+        except HTTPException:
+            raise
+        except sqlite3.Error as exc:
+            logger.error("get_user_growth DB error: %s", exc)
+            raise HTTPException(status_code=500, detail="Failed to load growth data.")
+        finally:
+            conn.close()
 
-                -- Cost basis: current unrealised value of all open/partial buy trades
-                -- entered on or before this date, using current remaining_quantity.
-                -- net_total_value/quantity is the per-unit net cost (commission-inclusive);
-                -- scaling by remaining_quantity keeps partial-lot accounting correct.
-                COALESCE((
-                    SELECT SUM(
-                        t2.remaining_quantity
-                        * COALESCE(t2.net_total_value, t2.total_value + t2.commission)
-                        / NULLIF(t2.quantity, 0)
-                    )
-                    FROM   trades t2
-                    WHERE  t2.user_id   = ?
-                      AND  t2.action    = 'buy'
-                      AND  t2.status    IN ('open', 'partial')
-                      AND  t2.trade_date <= ed.date
-                ), 0.0) AS cost_basis,
+        full = [
+            {
+                "date":         r[0],
+                "cost_basis":   float(r[1]),
+                "realized_pnl": float(r[2]),
+            }
+            for r in rows
+        ]
+        stats_cache.set_growth(user_id, full)
 
-                -- Realised P&L: running total of sell lots closed on or before this date.
-                -- sell_lots.realized_pnl is already commission-adjusted at write time
-                -- (net of both sell commission and the proportional buy commission).
-                COALESCE((
-                    SELECT SUM(sl2.realized_pnl)
-                    FROM   sell_lots sl2
-                    JOIN   trades    t3 ON sl2.buy_trade_id = t3.id
-                    WHERE  t3.user_id      = ?
-                      AND  sl2.sell_date  <= ed.date
-                ), 0.0) AS realized_pnl
-
-            FROM  event_dates ed
-            ORDER BY ed.date
-            """,
-            (user_id, user_id, user_id, user_id),
-        )
-        rows = cur.fetchall()
-    except HTTPException:
-        raise
-    except sqlite3.Error as exc:
-        logger.error("get_user_growth DB error: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to load growth data.")
-    finally:
-        conn.close()
-
-    return [
-        {
-            "date":         r[0],
-            "cost_basis":   float(r[1]),
-            "realized_pnl": float(r[2]),
-        }
-        for r in rows
-    ]
+    if cutoff is None:
+        return full
+    # Rows are ordered by date; ISO date strings compare correctly lexicographically.
+    return [pt for pt in full if pt["date"] >= cutoff]

@@ -59,6 +59,35 @@ _TRADES_COLS = (
 )
 
 
+# Performance indexes, created after the tables exist. CREATE INDEX IF NOT EXISTS
+# makes this safe to run repeatedly on an existing database.
+_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_trades_user_id ON trades(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_trades_user_date ON trades(user_id, trade_date DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_trades_user_status ON trades(user_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_trades_user_ticker ON trades(user_id, ticker)",
+    "CREATE INDEX IF NOT EXISTS idx_trades_ticker ON trades(ticker)",
+    "CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)",
+    "CREATE INDEX IF NOT EXISTS idx_sell_lots_buy_trade_id ON sell_lots(buy_trade_id)",
+    "CREATE INDEX IF NOT EXISTS idx_sell_lots_sell_date ON sell_lots(sell_date DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_cash_pool_user_id ON cash_pool(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_cash_pool_user_date ON cash_pool(user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_price_cache_ticker_source ON price_cache(ticker, source)",
+]
+
+
+def create_indexes(conn):
+    """Create all performance indexes. Idempotent — safe on an existing database."""
+    cur = conn.cursor()
+    for ddl in _INDEXES:
+        cur.execute(ddl)
+    conn.commit()
+    # Refresh the query planner's statistics now that the indexes exist.
+    cur.execute("ANALYZE")
+    conn.commit()
+    print(f"Ensured {len(_INDEXES)} indexes and ran ANALYZE")
+
+
 def seed_trade_types(conn):
     """Insert the default trade types if the table is empty."""
     cur = conn.cursor()
@@ -179,6 +208,9 @@ def _bootstrap(conn, *, seed_demo_user: bool):
     cur = conn.cursor()
     cur.executescript(SCHEMA)
     _migrate(conn)
+
+    # Create indexes after tables exist (and after the trades rebuild in _migrate).
+    create_indexes(conn)
 
     if seed_demo_user:
         cur.execute("SELECT id FROM users WHERE email = ?", (SEED_USER[1],))

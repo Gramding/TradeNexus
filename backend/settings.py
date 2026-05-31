@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 
 from db import DB_PATH, get_connection
 from backup import run_startup_backup
+import stats_cache
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["settings"])
@@ -135,6 +136,37 @@ def clear_price_cache():
         conn.close()
 
 
+@router.get("/settings/db-stats")
+def db_stats():
+    """Report row counts, DB file size, and existing indexes so index creation
+    can be verified."""
+    conn = get_connection()
+    try:
+        trades = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+        sell_lots = conn.execute("SELECT COUNT(*) FROM sell_lots").fetchone()[0]
+        cash_pool = conn.execute("SELECT COUNT(*) FROM cash_pool").fetchone()[0]
+        indexes = [
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' ORDER BY name"
+            ).fetchall()
+        ]
+    except sqlite3.Error as exc:
+        logger.error("db_stats DB error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to read database stats.")
+    finally:
+        conn.close()
+
+    size_bytes = DB_PATH.stat().st_size if DB_PATH.exists() else 0
+    return {
+        "trades": int(trades),
+        "sell_lots": int(sell_lots),
+        "cash_pool": int(cash_pool),
+        "db_size_mb": round(size_bytes / (1024 * 1024), 2),
+        "indexes": indexes,
+    }
+
+
 @router.get("/settings/backup")
 def download_backup():
     if not DB_PATH.exists():
@@ -187,5 +219,8 @@ async def restore_backup(file: UploadFile = File(...)):
         sidecar = DB_PATH.with_name(DB_PATH.name + suffix)
         if sidecar.exists():
             sidecar.unlink()
+
+    # The whole database was replaced, so every cached stats/growth result is stale.
+    stats_cache.invalidate_all()
 
     return {"message": "Database restored successfully. Previous database was backed up."}

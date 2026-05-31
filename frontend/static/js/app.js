@@ -28,12 +28,50 @@ const tabPanels         = document.querySelectorAll('.tab-panel');
 const filterTicker      = document.getElementById('filter-ticker');
 const filterTradeType   = document.getElementById('filter-trade-type');
 const filterAction      = document.getElementById('filter-action');
+const filterDateFrom    = document.getElementById('filter-date-from');
+const filterDateTo      = document.getElementById('filter-date-to');
 const btnClearFilters   = document.getElementById('btn-clear-filters');
 const tradesSpinner     = document.getElementById('trades-spinner');
 const tradesError       = document.getElementById('trades-error');
 const tradesTbody       = document.getElementById('trades-tbody');
 const tradesEmpty       = document.getElementById('trades-empty');
 const tradesTableWrap   = document.getElementById('trades-table-wrap');
+const tradesCountHeader = document.getElementById('trades-count-header');
+const tradesCountText   = document.getElementById('trades-count-text');
+const tradesHeaderSpin  = document.getElementById('trades-header-spinner');
+const tradesLoadmore    = document.getElementById('trades-loadmore');
+
+// ── Shared list pagination helpers ──────────────────────────────────────────────
+const fmtCount = (n) => Number(n).toLocaleString();
+
+// Renders the footer of a paginated list: a "Load N more" button, an "all loaded"
+// note, or a cap notice when the DOM row limit is reached.
+//   state: { loaded, total, hasMore, capped, pageSize, nounP, capNotice, onMore }
+function renderListFooter(el, state) {
+  el.innerHTML = '';
+  if (state.capped) {
+    el.className = 'list-loadmore';
+    el.innerHTML = `<div class="list-notice">${escHtml(state.capNotice)}</div>`;
+    el.classList.remove('hidden');
+    return;
+  }
+  if (state.hasMore) {
+    const btn = document.createElement('button');
+    btn.className = 'secondary load-more-btn';
+    btn.textContent = `Load ${state.pageSize} more`;
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="mini-spinner"></span> Loading…`;
+      Promise.resolve(state.onMore()).catch(() => {});
+    });
+    el.appendChild(btn);
+    el.classList.remove('hidden');
+    return;
+  }
+  if (!state.loaded) { el.classList.add('hidden'); return; }
+  el.innerHTML = `<div class="list-notice">All ${fmtCount(state.total)} ${state.nounP} loaded</div>`;
+  el.classList.remove('hidden');
+}
 
 const addTradeForm      = document.getElementById('add-trade-form');
 const tradeTicker       = document.getElementById('trade-ticker');
@@ -154,6 +192,31 @@ function escHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ── Icons ───────────────────────────────────────────────────────────────────────
+// A single consistent line-icon set (Lucide-style: 24×24, 2px stroke, currentColor)
+// so every control reads the same instead of the mismatched Unicode glyphs we had.
+const ICONS = {
+  edit:        '<path d="M17 3a2.828 2.828 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>',
+  copy:        '<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  trash:       '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+  close:       '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  download:    '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  refresh:     '<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/>',
+  chevronUp:   '<path d="m18 15-6-6-6 6"/>',
+  chevronDown: '<path d="m6 9 6 6 6-6"/>',
+  settings:    '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  plus:        '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  alert:       '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  check:       '<path d="M20 6 9 17l-5-5"/>',
+  arrowRight:  '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  search:      '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+};
+
+function icon(name, cls = '') {
+  return `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+         `stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+}
+
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 function switchTab(name, opts = {}) {
   tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === name));
@@ -164,6 +227,7 @@ function switchTab(name, opts = {}) {
   });
   if (name === 'trades')     loadTrades();
   if (name === 'positions')  loadPositions();
+  if (name === 'cash')       loadCash();
   if (name === 'analytics')  loadAnalytics();
   if (name === 'add-trade') {
     loadFormCashBalance();  // cache the balance once, on open (re-fetched each open)
@@ -315,51 +379,130 @@ async function saveUser() {
 }
 
 // ── Trades table ──────────────────────────────────────────────────────────────
-async function loadTrades() {
-  if (!activeUserId) return;
+// ── Trades: cursor pagination + server-side sort ────────────────────────────────
+const TRADES_PAGE = 100;       // page size
+const TRADES_DOM_CAP = 500;    // never render more than this many rows at once
 
-  tradesSpinner.classList.remove('hidden');
-  tradesTableWrap.classList.add('hidden');
-  clearError(tradesError);
+// Header sort-key -> the API's sort_by value. Columns absent here are NOT
+// server-sortable (the API only sorts on these five), so their headers are made
+// inert at init — client-sorting a single page would mislead on the full dataset.
+const TRADE_SORT_API = {
+  date:     'trade_date',
+  ticker:   'ticker',
+  quantity: 'quantity',
+  price:    'price_per_unit',
+  total:    'total_value',
+};
 
-  const params = new URLSearchParams();
-  const ticker = filterTicker.value.trim();
-  const type   = filterTradeType.value;
-  const action = filterAction.value;
-  if (ticker) params.set('ticker', ticker);
-  if (type)   params.set('trade_type', type);
-  if (action) params.set('action', action);
-
-  try {
-    const trades = await apiFetch(`/users/${activeUserId}/trades?${params}`);
-    currentTrades = trades;
-    applyTradeSort();        // re-render with the active sort preserved
-    tradesTableWrap.classList.remove('hidden');
-  } catch (e) {
-    showError(tradesError, 'Failed to load trades: ' + e.message);
-  } finally {
-    tradesSpinner.classList.add('hidden');
-  }
-}
-
-// ── Client-side sorting ─────────────────────────────────────────────────────────
-// The most recently loaded trades, kept in memory so re-sorting never re-fetches.
-let currentTrades = [];
-// Active sort, or null for the default order (trade_date desc, no arrow shown).
+let currentTrades = [];     // accumulated rows currently in the DOM
+let tradesCursor  = null;
+let tradesHasMore = false;
+let tradesTotal   = 0;
+let tradesLoading = false;
+// Active sort, or null for the API default (trade_date desc, no arrow shown).
 let activeSort = null;
 
-// Maps a header's data-sort-key to the trade field and how to compare it.
-const TRADE_SORT_COLUMNS = {
-  date:       { field: 'trade_date',      type: 'date'   },
-  ticker:     { field: 'ticker',          type: 'string' },
-  type:       { field: 'trade_type',      type: 'string' },
-  action:     { field: 'action',          type: 'string' },
-  quantity:   { field: 'quantity',        type: 'number' },
-  price:      { field: 'price_per_unit',  type: 'number' },
-  total:      { field: 'total_value',     type: 'number' },
-  commission: { field: 'commission',      type: 'number' },
-  net:        { field: 'net_total_value', type: 'number' },
-};
+function buildTradeParams() {
+  const params = new URLSearchParams();
+  const ticker = filterTicker.value.trim();
+  if (ticker)               params.set('ticker', ticker);
+  if (filterTradeType.value) params.set('trade_type', filterTradeType.value);
+  if (filterAction.value)    params.set('action', filterAction.value);
+  if (filterDateFrom.value)  params.set('date_from', filterDateFrom.value);
+  if (filterDateTo.value)    params.set('date_to', filterDateTo.value);
+  params.set('limit', String(TRADES_PAGE));
+  if (activeSort) {
+    params.set('sort_by', TRADE_SORT_API[activeSort.key]);
+    params.set('sort_dir', activeSort.dir);
+  }
+  return params;
+}
+
+// Fetch page 1, resetting any loaded rows + cursor. opts.sortRefetch keeps the
+// table visible and dims it (used for sort changes) instead of the big spinner.
+function loadTrades(opts = {}) {
+  if (!activeUserId) return Promise.resolve();
+  tradesLoading = true;
+  clearError(tradesError);
+
+  if (opts.sortRefetch) {
+    tradesTableWrap.classList.add('list-loading');
+    tradesHeaderSpin.classList.remove('hidden');
+  } else {
+    tradesSpinner.classList.remove('hidden');
+    tradesTableWrap.classList.add('hidden');
+    tradesCountHeader.classList.add('hidden');
+    tradesLoadmore.classList.add('hidden');
+  }
+
+  return apiFetch(`/users/${activeUserId}/trades?${buildTradeParams()}`)
+    .then(resp => {
+      currentTrades = resp.trades;
+      tradesTotal   = resp.total_count;
+      tradesHasMore = resp.has_more;
+      tradesCursor  = resp.next_cursor;
+      renderTradesRows(currentTrades, { append: false });
+      updateTradesChrome();
+      tradesTableWrap.classList.remove('hidden');
+    })
+    .catch(e => showError(tradesError, 'Failed to load trades: ' + e.message))
+    .finally(() => {
+      tradesLoading = false;
+      tradesSpinner.classList.add('hidden');
+      tradesTableWrap.classList.remove('list-loading');
+      tradesHeaderSpin.classList.add('hidden');
+    });
+}
+
+// Fetch the next page and append it (never replacing the existing rows), capping
+// the DOM at TRADES_DOM_CAP rows.
+function loadMoreTrades() {
+  if (tradesLoading || !tradesHasMore) return Promise.resolve();
+  if (currentTrades.length >= TRADES_DOM_CAP) return Promise.resolve();
+  tradesLoading = true;
+
+  const url = `/users/${activeUserId}/trades?${buildTradeParams()}` +
+              `&cursor=${encodeURIComponent(tradesCursor)}`;
+  return apiFetch(url)
+    .then(resp => {
+      let newRows = resp.trades;
+      tradesHasMore = resp.has_more;
+      tradesCursor  = resp.next_cursor;
+      currentTrades = currentTrades.concat(newRows);
+      if (currentTrades.length > TRADES_DOM_CAP) {
+        const overflow = currentTrades.length - TRADES_DOM_CAP;
+        currentTrades = currentTrades.slice(0, TRADES_DOM_CAP);
+        newRows = newRows.slice(0, newRows.length - overflow);
+      }
+      renderTradesRows(newRows, { append: true });
+    })
+    .catch(e => showToast('Failed to load more: ' + e.message, true))
+    .finally(() => {
+      tradesLoading = false;
+      updateTradesChrome();   // restores the button (or swaps to notice / all-loaded)
+    });
+}
+
+// Updates the "Showing X of Y" header and the load-more / cap-notice footer.
+function updateTradesChrome() {
+  const loaded = currentTrades.length;
+  if (tradesTotal === 0) {
+    tradesCountHeader.classList.add('hidden');
+    tradesLoadmore.classList.add('hidden');
+    return;
+  }
+  tradesCountHeader.classList.remove('hidden');
+  tradesCountText.textContent = `Showing ${fmtCount(loaded)} of ${fmtCount(tradesTotal)} trades`;
+
+  const capped = loaded >= TRADES_DOM_CAP && (tradesHasMore || tradesTotal > loaded);
+  renderListFooter(tradesLoadmore, {
+    loaded, total: tradesTotal,
+    hasMore: tradesHasMore && !capped,
+    capped, pageSize: TRADES_PAGE, nounP: 'trades',
+    capNotice: 'Showing 500 trades. Use filters to narrow results or export to CSV for the full list.',
+    onMore: loadMoreTrades,
+  });
+}
 
 function compareTradeValues(a, b, type) {
   if (type === 'number') {
@@ -376,37 +519,22 @@ function compareTradeValues(a, b, type) {
   return sa < sb ? -1 : sa > sb ? 1 : 0;
 }
 
-function getSortedTrades() {
-  const data = currentTrades.slice();   // Array#sort is stable, so ties keep API order
-  if (!activeSort) {
-    // Default order: trade_date descending.
-    data.sort((a, b) => compareTradeValues(b.trade_date, a.trade_date, 'date'));
-    return data;
-  }
-  const col  = TRADE_SORT_COLUMNS[activeSort.key];
-  const sign = activeSort.dir === 'asc' ? 1 : -1;
-  data.sort((a, b) => sign * compareTradeValues(a[col.field], b[col.field], col.type));
-  return data;
-}
-
 function updateSortIndicators() {
   document.querySelectorAll('#trades-table th[data-sort-key]').forEach(th => {
     const arrow = th.querySelector('.sort-arrow');
     if (!arrow) return;
     if (activeSort && activeSort.key === th.dataset.sortKey) {
-      arrow.textContent = activeSort.dir === 'asc' ? '↑' : '↓';
+      arrow.innerHTML = icon(activeSort.dir === 'asc' ? 'chevronUp' : 'chevronDown', 'icon-sort');
     } else {
-      arrow.textContent = '';
+      arrow.innerHTML = '';
     }
   });
 }
 
-function applyTradeSort() {
-  renderTradesTable(getSortedTrades());
-  updateSortIndicators();
-}
-
+// Cursor pagination means we only hold one server-sorted page set, so sorting must
+// happen on the server: each click resets the cursor and re-fetches from page 1.
 function onSortHeaderClick(key) {
+  if (!TRADE_SORT_API[key]) return;            // header isn't server-sortable
   if (!activeSort || activeSort.key !== key) {
     activeSort = { key, dir: 'asc' };          // 1st click: ascending
   } else if (activeSort.dir === 'asc') {
@@ -414,19 +542,31 @@ function onSortHeaderClick(key) {
   } else {
     activeSort = null;                         // 3rd click: back to default
   }
-  applyTradeSort();
+  updateSortIndicators();
+  loadTrades({ sortRefetch: true });
 }
 
+// Disable headers the API can't sort on (so client sorting a single page never
+// misleads); wire the rest to re-fetch from the server.
 document.querySelectorAll('#trades-table th[data-sort-key]').forEach(th => {
-  th.addEventListener('click', () => onSortHeaderClick(th.dataset.sortKey));
+  if (!TRADE_SORT_API[th.dataset.sortKey]) {
+    th.removeAttribute('data-sort-key');
+    const a = th.querySelector('.sort-arrow');
+    if (a) a.remove();
+  } else {
+    th.addEventListener('click', () => onSortHeaderClick(th.dataset.sortKey));
+  }
 });
 
-function renderTradesTable(trades) {
-  tradesTbody.innerHTML = '';
-
-  if (!trades.length) {
-    tradesEmpty.classList.remove('hidden');
-    return;
+// Renders trade rows. append=false replaces the tbody (page 1); append=true adds
+// the next page's rows without disturbing the existing ones.
+function renderTradesRows(trades, { append }) {
+  if (!append) {
+    tradesTbody.innerHTML = '';
+    if (!trades.length) {
+      tradesEmpty.classList.remove('hidden');
+      return;
+    }
   }
   tradesEmpty.classList.add('hidden');
 
@@ -445,9 +585,9 @@ function renderTradesTable(trades) {
       <td class="num">${t.net_total_value != null ? formatCurrency(t.net_total_value) : '—'}</td>
       <td class="notes-cell" title="${escHtml(t.notes ?? '')}">${escHtml(t.notes ?? '—')}</td>
       <td>
-        <button class="edit-btn" title="Edit trade">✏</button>
-        <button class="edit-btn dup-btn" title="Duplicate trade">⧉</button>
-        <button class="danger" title="Delete trade">✕</button>
+        <button class="icon-btn edit-btn" title="Edit trade" aria-label="Edit trade">${icon('edit')}</button>
+        <button class="icon-btn edit-btn dup-btn" title="Duplicate trade" aria-label="Duplicate trade">${icon('copy')}</button>
+        <button class="icon-btn danger" title="Delete trade" aria-label="Delete trade">${icon('trash')}</button>
       </td>
     `;
     if (t.broker_color) {
@@ -513,11 +653,15 @@ filterTicker.addEventListener('input', () => {
 });
 filterTradeType.addEventListener('change', loadTrades);
 filterAction.addEventListener('change', loadTrades);
+filterDateFrom.addEventListener('change', () => loadTrades());
+filterDateTo.addEventListener('change', () => loadTrades());
 
 btnClearFilters.addEventListener('click', () => {
   filterTicker.value = '';
   filterTradeType.value = '';
   filterAction.value = '';
+  filterDateFrom.value = '';
+  filterDateTo.value = '';
   loadTrades();
 });
 
@@ -652,7 +796,7 @@ function updateCashWarning() {
 
   if (formCashBalance <= 0) {
     cashWarning.classList.add('soft');
-    cashWarning.textContent = 'Your cash pool is empty. Consider adding a deposit first.';
+    cashWarning.innerHTML = `${icon('alert', 'icon-inline')} Your cash pool is empty. Consider adding a deposit first.`;
     cashWarning.classList.remove('hidden');
     return;
   }
@@ -665,8 +809,9 @@ function updateCashWarning() {
   if (net > formCashBalance) {
     const over = net - formCashBalance;
     cashWarning.classList.remove('soft');
-    cashWarning.textContent =
-      `⚠ This trade (${formatCurrency(net)}) would exceed your cash balance ` +
+    // Values are formatted currency (no user input), so innerHTML is safe here.
+    cashWarning.innerHTML =
+      `${icon('alert', 'icon-inline')} This trade (${formatCurrency(net)}) would exceed your cash balance ` +
       `(${formatCurrency(formCashBalance)}) by ${formatCurrency(over)}`;
     cashWarning.classList.remove('hidden');
   } else {
@@ -1088,16 +1233,134 @@ addCashForm.addEventListener('submit', async (e) => {
       method: 'POST',
       body: JSON.stringify({ amount, note: addCashNote.value.trim() || null }),
     });
-    positionsBalance = res.balance;
-    positionsCashBalance.textContent = formatCurrency(res.balance);
+    setCashBalance(res.balance);
     showToast(`Added ${formatCurrency(amount)} to cash.`);
     closeAddCashForm();
+    loadCash();   // refresh the history so the new deposit appears
   } catch (err) {
     showToast(err.message, true);
   } finally {
     saveBtn.disabled = false;
   }
 });
+
+// ── Cash tab: balance + paginated transaction history ───────────────────────────
+const CASH_PAGE = 50;
+const CASH_DOM_CAP = 500;
+const cashBalanceValue = document.getElementById('cash-balance-value');
+const cashSpinner      = document.getElementById('cash-spinner');
+const cashError        = document.getElementById('cash-error');
+const cashTbody        = document.getElementById('cash-tbody');
+const cashEmpty        = document.getElementById('cash-empty');
+const cashTableWrap    = document.getElementById('cash-table-wrap');
+const cashCountHeader  = document.getElementById('cash-count-header');
+const cashCountText    = document.getElementById('cash-count-text');
+const cashLoadmore     = document.getElementById('cash-loadmore');
+
+let cashTransactions = [];
+let cashCursor  = null;
+let cashHasMore = false;
+let cashTotal   = 0;
+let cashLoading = false;
+
+// Mirror the balance into both the Cash tab and the Positions tab displays.
+function setCashBalance(v) {
+  if (v == null) return;
+  positionsBalance = v;
+  const txt = formatCurrency(v);
+  if (cashBalanceValue)     cashBalanceValue.textContent = txt;
+  if (positionsCashBalance) positionsCashBalance.textContent = txt;
+}
+
+function loadCash() {
+  if (!activeUserId) return Promise.resolve();
+  cashLoading = true;
+  clearError(cashError);
+  cashSpinner.classList.remove('hidden');
+  cashTableWrap.classList.add('hidden');
+  cashCountHeader.classList.add('hidden');
+  cashLoadmore.classList.add('hidden');
+
+  return apiFetch(`/users/${activeUserId}/cash?limit=${CASH_PAGE}`)
+    .then(resp => {
+      setCashBalance(resp.balance);
+      cashTransactions = resp.transactions;
+      cashTotal   = resp.total_count;
+      cashHasMore = resp.has_more;
+      cashCursor  = resp.next_cursor;
+      renderCashRows(cashTransactions, { append: false });
+      updateCashChrome();
+      cashTableWrap.classList.remove('hidden');
+    })
+    .catch(e => showError(cashError, 'Failed to load cash: ' + e.message))
+    .finally(() => { cashLoading = false; cashSpinner.classList.add('hidden'); });
+}
+
+function loadMoreCash() {
+  if (cashLoading || !cashHasMore) return Promise.resolve();
+  if (cashTransactions.length >= CASH_DOM_CAP) return Promise.resolve();
+  cashLoading = true;
+
+  const url = `/users/${activeUserId}/cash?limit=${CASH_PAGE}` +
+              `&cursor=${encodeURIComponent(cashCursor)}`;
+  return apiFetch(url)
+    .then(resp => {
+      let newRows = resp.transactions;
+      cashHasMore = resp.has_more;
+      cashCursor  = resp.next_cursor;
+      cashTransactions = cashTransactions.concat(newRows);
+      if (cashTransactions.length > CASH_DOM_CAP) {
+        const overflow = cashTransactions.length - CASH_DOM_CAP;
+        cashTransactions = cashTransactions.slice(0, CASH_DOM_CAP);
+        newRows = newRows.slice(0, newRows.length - overflow);
+      }
+      renderCashRows(newRows, { append: true });
+    })
+    .catch(e => showToast('Failed to load more: ' + e.message, true))
+    .finally(() => { cashLoading = false; updateCashChrome(); });
+}
+
+function renderCashRows(rows, { append }) {
+  if (!append) {
+    cashTbody.innerHTML = '';
+    if (!rows.length) { cashEmpty.classList.remove('hidden'); return; }
+  }
+  cashEmpty.classList.add('hidden');
+  rows.forEach(c => {
+    const tr = document.createElement('tr');
+    const cls  = c.amount >= 0 ? 'pnl-pos' : 'pnl-neg';
+    const sign = c.amount > 0 ? '+' : '';
+    tr.innerHTML = `
+      <td>${formatDate(c.created_at)}</td>
+      <td>${badge(c.transaction_type)}</td>
+      <td class="num ${cls}">${sign}${formatCurrency(c.amount)}</td>
+      <td class="notes-cell" title="${escHtml(c.note ?? '')}">${escHtml(c.note ?? '—')}</td>
+    `;
+    cashTbody.appendChild(tr);
+  });
+}
+
+function updateCashChrome() {
+  const loaded = cashTransactions.length;
+  if (cashTotal === 0) {
+    cashCountHeader.classList.add('hidden');
+    cashLoadmore.classList.add('hidden');
+    return;
+  }
+  cashCountHeader.classList.remove('hidden');
+  cashCountText.textContent = `Showing ${fmtCount(loaded)} of ${fmtCount(cashTotal)} transactions`;
+
+  const capped = loaded >= CASH_DOM_CAP && (cashHasMore || cashTotal > loaded);
+  renderListFooter(cashLoadmore, {
+    loaded, total: cashTotal,
+    hasMore: cashHasMore && !capped,
+    capped, pageSize: CASH_PAGE, nounP: 'transactions',
+    capNotice: 'Showing 500 transactions. Older transactions are hidden to keep the page responsive.',
+    onMore: loadMoreCash,
+  });
+}
+
+document.getElementById('btn-goto-cash').addEventListener('click', () => switchTab('cash'));
 
 async function loadPositions() {
   if (!activeUserId) return;
@@ -1175,9 +1438,9 @@ function updatePositionSortIndicators() {
     const arrow = th.querySelector('.sort-arrow');
     if (!arrow) return;
     if (activePositionSort && activePositionSort.key === th.dataset.sortKey) {
-      arrow.textContent = activePositionSort.dir === 'asc' ? '↑' : '↓';
+      arrow.innerHTML = icon(activePositionSort.dir === 'asc' ? 'chevronUp' : 'chevronDown', 'icon-sort');
     } else {
-      arrow.textContent = '';
+      arrow.innerHTML = '';
     }
   });
 }
@@ -1707,7 +1970,7 @@ function showSettingStatus(el, state, msg) {
   if (!el) return;
   clearTimeout(_statusTimers.get(el));
   if (state === 'saved') {
-    el.textContent = '✓ Saved';
+    el.innerHTML = `${icon('check', 'icon-sm')} Saved`;
     el.className = 'settings-status saved';
     _statusTimers.set(el, setTimeout(() => {
       el.textContent = '';
@@ -1948,7 +2211,7 @@ function renderTypeRowDisplay(tr, t) {
     ? '<span class="badge badge-default-type">Default</span>'
     : '<span class="badge badge-custom-type">Custom</span>';
   // Default types cannot be deleted, so they get no Delete button.
-  const delBtn = t.is_default ? '' : '<button class="danger type-del-btn" title="Delete type">✕</button>';
+  const delBtn = t.is_default ? '' : `<button class="icon-btn danger type-del-btn" title="Delete type" aria-label="Delete type">${icon('trash', 'icon-sm')}</button>`;
   tr.innerHTML = `
     <td><strong>${escHtml(t.name)}</strong></td>
     <td class="num">${t.usage_count}</td>
@@ -2119,7 +2382,7 @@ function renderBrokersTable(brokers) {
       : `<span class="broker-color-dot broker-color-dot--empty"></span>`;
     const isDefault = String(b.id) === String(appSettings.default_broker_id || '');
     const check = isDefault
-      ? '<span class="broker-default-check" title="Default broker">✓</span>'
+      ? `<span class="broker-default-check" title="Default broker">${icon('check', 'icon-sm')}</span>`
       : '';
     const tr = document.createElement('tr');
     tr.innerHTML = `
@@ -2129,7 +2392,7 @@ function renderBrokersTable(brokers) {
       <td>
         <button class="secondary broker-default-btn"${isDefault ? ' disabled' : ''}>${isDefault ? 'Default' : 'Set as default'}</button>
         <button class="secondary broker-edit-btn">Edit</button>
-        <button class="danger broker-del-btn" title="Delete broker">✕</button>
+        <button class="icon-btn danger broker-del-btn" title="Delete broker" aria-label="Delete broker">${icon('trash', 'icon-sm')}</button>
       </td>
     `;
     tr.querySelector('.broker-default-btn').addEventListener('click', () => setDefaultBroker(b.id));
@@ -2438,6 +2701,7 @@ let searchDebounce = null;
 let searchSeq = 0;                  // guards against out-of-order responses
 let pendingSearchHighlight = null;  // {type:'trade'|'position', key} consumed after navigation
 let lastSearchData = null;          // cached so click handlers can resolve rows
+let lastSearchQuery = '';           // current query, reused by the "View all" overlay
 
 function closeSearch() {
   searchResults.classList.add('hidden');
@@ -2504,9 +2768,14 @@ async function runSearch(q) {
 }
 
 function renderSearchResults(data, q) {
-  const trades = data.trades || [];
-  const positions = data.positions || [];
-  const cash = data.cash_transactions || [];
+  lastSearchQuery = q;
+  // Each bucket is now { results, has_more, next_cursor }.
+  const tradesB    = data.trades || { results: [] };
+  const positionsB = data.positions || { results: [] };
+  const cashB      = data.cash_transactions || { results: [] };
+  const trades    = tradesB.results || [];
+  const positions = positionsB.results || [];
+  const cash      = cashB.results || [];
 
   if (!trades.length && !positions.length && !cash.length) {
     searchResults.innerHTML = `<div class="sr-empty">No results for “${escHtml(q)}”</div>`;
@@ -2515,9 +2784,9 @@ function renderSearchResults(data, q) {
   }
 
   let html = '';
-  if (trades.length)    html += _searchSection('Trades', trades, _tradeRow, 'trades');
-  if (positions.length) html += _searchSection('Positions', positions, _positionRow, 'positions');
-  if (cash.length)      html += _searchSection('Cash Transactions', cash, _cashRow, 'cash');
+  if (trades.length)    html += _searchSection('Trades', tradesB, _tradeRow, 'trades');
+  if (positions.length) html += _searchSection('Positions', positionsB, _positionRow, 'positions');
+  if (cash.length)      html += _searchSection('Cash Transactions', cashB, _cashRow, 'cash_transactions');
   searchResults.innerHTML = html;
   searchResults.classList.remove('hidden');
 
@@ -2538,22 +2807,21 @@ function renderSearchResults(data, q) {
       switchTab('positions');
     });
   });
-  searchResults.querySelectorAll('.sr-viewall:not(.sr-inert)').forEach(el => {
-    el.addEventListener('click', () => {
-      const kind = el.dataset.viewall;
-      clearSearchInput();
-      if (kind === 'trades')    switchTab('trades');
-      if (kind === 'positions') switchTab('positions');
-    });
+  // "View all" opens the full paginated results view for that bucket.
+  searchResults.querySelectorAll('.sr-viewall').forEach(el => {
+    el.addEventListener('click', () => openSearchAll(el.dataset.viewall, lastSearchQuery));
   });
 }
 
-function _searchSection(label, items, rowFn, kind) {
+// `bucket` is { results, has_more, ... }. We display up to 5; "View all" appears
+// whenever more exist (either >5 loaded here, or has_more on the server).
+function _searchSection(label, bucket, rowFn, kind) {
+  const items = bucket.results || [];
   const rows = items.slice(0, 5).map((it, i) => rowFn(it, i)).join('');
   let viewAll = '';
-  if (items.length > 5) {
-    const inert = kind === 'cash' ? ' sr-inert' : '';
-    viewAll = `<div class="sr-viewall${inert}" data-viewall="${kind}">View all ${items.length} results</div>`;
+  if (items.length > 5 || bucket.has_more) {
+    const count = bucket.has_more ? `${items.length}+` : String(items.length);
+    viewAll = `<div class="sr-viewall" data-viewall="${kind}">View all ${count} results</div>`;
   }
   return `<div class="sr-section"><div class="sr-section-header">${label}</div>${rows}${viewAll}</div>`;
 }
@@ -2585,6 +2853,118 @@ function _cashRow(c) {
     <span class="sr-meta">${formatDate(c.created_at)}</span>
   </div>`;
 }
+
+// ── "View all X results": full paginated results view for one bucket ────────────
+const searchAllOverlay  = document.getElementById('search-all-overlay');
+const searchAllTitle    = document.getElementById('search-all-title');
+const searchAllList     = document.getElementById('search-all-list');
+const searchAllEmpty    = document.getElementById('search-all-empty');
+const searchAllError    = document.getElementById('search-all-error');
+const searchAllSpinner  = document.getElementById('search-all-spinner');
+const searchAllLoadmore = document.getElementById('search-all-loadmore');
+
+// Bucket name (matches the API `type` param + response key) -> title + row renderer.
+const SEARCH_ALL = {
+  trades:            { title: 'Trades',            rowFn: _tradeRow    },
+  positions:         { title: 'Positions',         rowFn: _positionRow },
+  cash_transactions: { title: 'Cash transactions', rowFn: _cashRow     },
+};
+
+let saKind = null, saQuery = '', saCursor = null, saHasMore = false;
+let saItems = [], saLoading = false;
+
+function openSearchAll(kind, q) {
+  if (!SEARCH_ALL[kind] || !activeUserId) return;
+  saKind = kind; saQuery = q; saItems = []; saCursor = null; saHasMore = false; saLoading = false;
+  searchAllTitle.textContent = `${SEARCH_ALL[kind].title} matching “${q}”`;
+  searchAllList.innerHTML = '';
+  searchAllEmpty.classList.add('hidden');
+  searchAllError.classList.add('hidden');
+  searchAllLoadmore.classList.add('hidden');
+  searchAllOverlay.classList.remove('hidden');
+  closeSearch();                 // hide the dropdown behind the overlay
+  fetchSearchAll(false);
+}
+
+function closeSearchAll() {
+  searchAllOverlay.classList.add('hidden');
+}
+
+function fetchSearchAll(append) {
+  if (saLoading) return Promise.resolve();
+  saLoading = true;
+  if (!append) searchAllSpinner.classList.remove('hidden');
+
+  let url = `/search?user_id=${activeUserId}&q=${encodeURIComponent(saQuery)}&type=${saKind}`;
+  if (append && saCursor) url += `&cursor=${encodeURIComponent(saCursor)}`;
+
+  return apiFetch(url)
+    .then(data => {
+      const bucket = data[saKind] || { results: [] };
+      const newItems = bucket.results || [];
+      saHasMore = bucket.has_more;
+      saCursor  = bucket.next_cursor;
+      saItems = saItems.concat(newItems);
+      renderSearchAllRows(newItems, append);
+      updateSearchAllChrome();
+    })
+    .catch(e => {
+      searchAllError.textContent = 'Search failed: ' + e.message;
+      searchAllError.classList.remove('hidden');
+      updateSearchAllChrome();
+    })
+    .finally(() => { saLoading = false; searchAllSpinner.classList.add('hidden'); });
+}
+
+function renderSearchAllRows(items, append) {
+  if (!append) {
+    searchAllList.innerHTML = '';
+    if (!items.length) { searchAllEmpty.classList.remove('hidden'); return; }
+  }
+  searchAllEmpty.classList.add('hidden');
+  const rowFn = SEARCH_ALL[saKind].rowFn;
+  const base = append ? searchAllList.children.length : 0;
+  searchAllList.insertAdjacentHTML(
+    'beforeend',
+    items.map((it, i) => rowFn(it, base + i)).join(''),
+  );
+  wireSearchAllNav();   // (re)bind via onclick so it's idempotent across appends
+}
+
+// Trades/positions rows navigate to their tab and flash; cash rows stay inert.
+function wireSearchAllNav() {
+  searchAllList.querySelectorAll('.sr-trade').forEach(el => {
+    el.onclick = () => {
+      const t = saItems[+el.dataset.i];
+      pendingSearchHighlight = { type: 'trade', key: t.trade_id };
+      closeSearchAll(); clearSearchInput(); switchTab('trades');
+    };
+  });
+  searchAllList.querySelectorAll('.sr-position').forEach(el => {
+    el.onclick = () => {
+      const p = saItems[+el.dataset.i];
+      pendingSearchHighlight = { type: 'position', key: p.ticker };
+      closeSearchAll(); clearSearchInput(); switchTab('positions');
+    };
+  });
+}
+
+function updateSearchAllChrome() {
+  renderListFooter(searchAllLoadmore, {
+    loaded: saItems.length, total: saItems.length,
+    hasMore: saHasMore, capped: false,
+    pageSize: 20, nounP: 'results',
+    onMore: () => fetchSearchAll(true),
+  });
+}
+
+document.getElementById('search-all-close').addEventListener('click', closeSearchAll);
+searchAllOverlay.addEventListener('click', (e) => {
+  if (e.target === searchAllOverlay) closeSearchAll();   // backdrop click
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !searchAllOverlay.classList.contains('hidden')) closeSearchAll();
+});
 
 searchInput.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { clearSearchInput(); searchInput.blur(); }

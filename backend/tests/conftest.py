@@ -25,6 +25,7 @@ db.DB_PATH = _TMPDIR / "test.db"
 # run_startup_backup() at import; the temp DB does not exist yet, so it no-ops.
 import init_db  # noqa: E402
 import main  # noqa: E402
+import stats_cache  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 
@@ -34,6 +35,9 @@ def _fresh_db():
         p = pathlib.Path(str(db.DB_PATH) + suffix)
         if p.exists():
             p.unlink()
+    # The stats/growth caches are process-global and outlive the temp DB, so clear
+    # them too or a recreated user id could serve another test's cached result.
+    stats_cache.invalidate_all()
     init_db.init()   # schema + migrations + default trade_types / settings / seed user
 
 

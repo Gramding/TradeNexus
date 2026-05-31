@@ -16,7 +16,7 @@
     <aside id="sidebar">
       <div id="sidebar-header">
         <span class="logo">TradeNexus</span>
-        <button id="btn-add-user" title="Add user">+</button>
+        <button id="btn-add-user" class="icon-btn" title="Add user" aria-label="Add user"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
       </div>
 
       <div id="add-user-form" class="hidden">
@@ -46,7 +46,7 @@
       </div>
 
       <div id="sidebar-footer">
-        <button id="btn-settings">⚙ Settings</button>
+        <button id="btn-settings"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>Settings</button>
       </div>
     </aside>
 
@@ -66,6 +66,7 @@
 
           <div id="global-search">
             <div id="search-input-wrap">
+              <svg class="icon icon-search-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
               <input id="search-input" type="text" autocomplete="off"
                      placeholder="Search trades, positions, transactions..." />
               <span id="search-spinner" class="search-spinner hidden"></span>
@@ -80,6 +81,7 @@
           <button class="tab-btn active" data-tab="trades">Trades</button>
           <button class="tab-btn" data-tab="add-trade">Add Trade</button>
           <button class="tab-btn" data-tab="positions">Positions</button>
+          <button class="tab-btn" data-tab="cash">Cash</button>
           <button class="tab-btn" data-tab="analytics">Analytics</button>
         </nav>
 
@@ -95,14 +97,25 @@
               <option value="buy">Buy</option>
               <option value="sell">Sell</option>
             </select>
+            <div class="date-filter">
+              <label for="filter-date-from">From</label>
+              <input id="filter-date-from" type="date" title="Show trades on or after this date" />
+              <label for="filter-date-to">To</label>
+              <input id="filter-date-to" type="date" title="Show trades on or before this date" />
+            </div>
             <button id="btn-clear-filters" class="secondary">Clear</button>
-            <button id="btn-export-csv" class="secondary" title="Download all trades as CSV">⬇ Export CSV</button>
+            <button id="btn-export-csv" class="secondary" title="Download all trades as CSV"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV</button>
           </div>
 
           <div id="trades-spinner" class="spinner-wrap hidden">
             <div class="spinner"></div>
           </div>
           <div id="trades-error" class="inline-error hidden"></div>
+
+          <div id="trades-count-header" class="list-count-header hidden">
+            <span id="trades-count-text"></span>
+            <span id="trades-header-spinner" class="mini-spinner hidden"></span>
+          </div>
 
           <div id="trades-table-wrap">
             <table id="trades-table">
@@ -125,6 +138,8 @@
             </table>
             <p id="trades-empty" class="placeholder hidden">No trades found.</p>
           </div>
+
+          <div id="trades-loadmore" class="list-loadmore hidden"></div>
         </div>
 
         <!-- Add Trade tab -->
@@ -216,20 +231,14 @@
 
           <div id="positions-content" class="hidden">
             <div id="positions-toolbar">
-              <button id="btn-refresh-prices" class="secondary">↻ Refresh Prices</button>
+              <button id="btn-refresh-prices" class="secondary"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg>Refresh Prices</button>
               <span id="prices-last-updated" class="prices-meta"></span>
             </div>
 
             <div id="positions-cash-row">
               <span class="stat-label">Cash Balance</span>
               <span id="positions-cash-balance" class="cash-balance-value">—</span>
-              <button type="button" id="btn-add-cash" class="secondary">+ Add cash</button>
-              <form id="add-cash-form" class="add-cash-form hidden">
-                <input id="add-cash-amount" type="number" min="0.01" step="0.01" placeholder="Amount" />
-                <input id="add-cash-note" type="text" placeholder="Note (optional)" autocomplete="off" />
-                <button type="submit" id="btn-save-cash">Add</button>
-                <button type="button" id="btn-cancel-cash" class="secondary">Cancel</button>
-              </form>
+              <button type="button" class="secondary" data-tab="cash" id="btn-goto-cash">Manage cash<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button>
             </div>
 
             <div id="positions-table-wrap">
@@ -253,6 +262,48 @@
               <p id="positions-empty" class="placeholder hidden">No open positions.</p>
             </div>
           </div>
+        </div>
+
+        <!-- Cash tab -->
+        <div id="tab-cash" class="tab-panel hidden">
+          <div id="cash-balance-row">
+            <span class="stat-label">Cash Balance</span>
+            <span id="cash-balance-value" class="cash-balance-value">—</span>
+            <button type="button" id="btn-add-cash" class="secondary"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Add cash</button>
+            <form id="add-cash-form" class="add-cash-form hidden">
+              <input id="add-cash-amount" type="number" min="0.01" step="0.01" placeholder="Amount" />
+              <input id="add-cash-note" type="text" placeholder="Note (optional)" autocomplete="off" />
+              <button type="submit" id="btn-save-cash">Add</button>
+              <button type="button" id="btn-cancel-cash" class="secondary">Cancel</button>
+            </form>
+          </div>
+
+          <div id="cash-spinner" class="spinner-wrap hidden">
+            <div class="spinner"></div>
+          </div>
+          <div id="cash-error" class="inline-error hidden"></div>
+
+          <div id="cash-count-header" class="list-count-header hidden">
+            <span id="cash-count-text"></span>
+            <span id="cash-header-spinner" class="mini-spinner hidden"></span>
+          </div>
+
+          <div id="cash-table-wrap">
+            <table id="cash-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th class="num">Amount</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody id="cash-tbody"></tbody>
+            </table>
+            <p id="cash-empty" class="placeholder hidden">No cash transactions yet.</p>
+          </div>
+
+          <div id="cash-loadmore" class="list-loadmore hidden"></div>
         </div>
 
         <!-- Analytics tab -->
@@ -424,7 +475,7 @@
         <div id="page-brokers" class="hidden">
           <div class="page-header">
             <h2 class="page-title">Brokers</h2>
-            <button id="btn-add-broker">+ Add Broker</button>
+            <button id="btn-add-broker"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Add Broker</button>
           </div>
 
           <div id="broker-form-wrap" class="hidden">
@@ -447,7 +498,7 @@
                     <button type="button" id="broker-color-swatch" class="color-swatch-btn" title="Open color picker"></button>
                     <input type="color" id="broker-color-native" tabindex="-1" />
                     <input type="text" id="broker-color-hex" placeholder="#rrggbb" maxlength="7" autocomplete="off" spellcheck="false" />
-                    <button type="button" id="broker-color-clear" class="color-clear-btn" title="Remove color">✕</button>
+                    <button type="button" id="broker-color-clear" class="color-clear-btn icon-btn" title="Remove color" aria-label="Remove color"><svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
                   </div>
                 </div>
               </div>
@@ -493,7 +544,7 @@
         <div id="page-trade-types" class="hidden">
           <div class="page-header">
             <h2 class="page-title">Trade Types</h2>
-            <button id="btn-add-trade-type">+ Add type</button>
+            <button id="btn-add-trade-type"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Add type</button>
           </div>
 
           <div id="trade-type-form-wrap" class="hidden">
@@ -539,7 +590,7 @@
               <input type="file" id="restore-file-input" accept=".db" />
               <button id="btn-restore-backup" class="secondary">Restore from backup</button>
             </div>
-            <p class="data-note data-note-warning">⚠ Restoring will overwrite your current data. This cannot be undone (except by restoring another backup).</p>
+            <p class="data-note data-note-warning"><svg class="icon icon-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Restoring will overwrite your current data. This cannot be undone (except by restoring another backup).</p>
             <div id="restore-result" class="hidden"></div>
           </section>
 
@@ -565,7 +616,7 @@
         <div class="sell-modal-title">
           <span id="edit-trade-title">Edit Trade</span>
         </div>
-        <button class="modal-close-btn" id="edit-trade-close" title="Close">✕</button>
+        <button class="modal-close-btn" id="edit-trade-close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
       </div>
       <div class="edit-trade-body">
         <form id="edit-trade-form">
@@ -639,7 +690,7 @@
           <span id="sell-modal-ticker"></span>
           <span id="sell-modal-type-badge" class="badge"></span>
         </div>
-        <button class="modal-close-btn" id="sell-modal-close" title="Close">✕</button>
+        <button class="modal-close-btn" id="sell-modal-close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
       </div>
 
       <div class="sell-modal-section">
@@ -701,12 +752,29 @@
     </div>
   </div>
 
+  <!-- Full search-results overlay ("View all X results") -->
+  <div id="search-all-overlay" class="hidden">
+    <div id="search-all-modal">
+      <div class="settings-header">
+        <span class="settings-title" id="search-all-title">Search results</span>
+        <button class="modal-close-btn" id="search-all-close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+      </div>
+      <div class="settings-body">
+        <div id="search-all-spinner" class="spinner-wrap hidden"><div class="spinner"></div></div>
+        <div id="search-all-error" class="inline-error hidden"></div>
+        <div id="search-all-list"></div>
+        <p id="search-all-empty" class="placeholder hidden">No results.</p>
+        <div id="search-all-loadmore" class="list-loadmore hidden"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Settings modal -->
   <div id="settings-overlay" class="hidden">
     <div id="settings-modal">
       <div class="settings-header">
         <span class="settings-title">Settings</span>
-        <button class="modal-close-btn" id="settings-close" title="Close">✕</button>
+        <button class="modal-close-btn" id="settings-close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
       </div>
       <div class="settings-body">
 
@@ -754,7 +822,7 @@
     <div id="shortcuts-panel">
       <div class="settings-header">
         <span class="settings-title">Keyboard Shortcuts</span>
-        <button class="modal-close-btn" id="shortcuts-close" title="Close">✕</button>
+        <button class="modal-close-btn" id="shortcuts-close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
       </div>
       <div class="shortcuts-body">
         <kbd class="key-badge">/</kbd><span>Focus the search bar</span>
