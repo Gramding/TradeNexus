@@ -9,6 +9,11 @@ _HEX_COLOR = re.compile(r'^#[0-9a-fA-F]{6}$')
 # Which instrument identifier fills the {value} placeholder in quote_url_template.
 _QUOTE_URL_KEYS = ("symbol", "ticker", "isin")
 
+# Placeholders a quote_url_template may use. {value} follows quote_url_key; the
+# rest target a specific instrument field directly.
+_QUOTE_URL_PLACEHOLDERS = ("value", "ticker", "symbol", "isin", "exchange")
+_PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -76,17 +81,29 @@ def _validate_quote_url_key(key: Optional[str]) -> Optional[str]:
 
 
 def _validate_quote_url_template(template: Optional[str]) -> Optional[str]:
-    """Normalize the template: None/blank -> None (no link); otherwise it must
-    carry the {value} placeholder the backend substitutes."""
+    """Normalize the template: None/blank -> None (no link); otherwise it must use
+    at least one known placeholder ({value}/{ticker}/{symbol}/{isin}/{exchange})
+    and no unknown ones."""
     if template is None:
         return None
     template = template.strip()
     if not template:
         return None
-    if "{value}" not in template:
+    used = set(_PLACEHOLDER_RE.findall(template))
+    if not used:
         raise HTTPException(
             status_code=422,
-            detail="quote_url_template must contain the '{value}' placeholder.",
+            detail="quote_url_template must contain a placeholder, e.g. '{value}' or '{isin}'.",
+        )
+    unknown = used - set(_QUOTE_URL_PLACEHOLDERS)
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"quote_url_template has unknown placeholder(s): "
+                f"{', '.join('{' + p + '}' for p in sorted(unknown))}. "
+                f"Allowed: {', '.join('{' + p + '}' for p in _QUOTE_URL_PLACEHOLDERS)}."
+            ),
         )
     return template
 

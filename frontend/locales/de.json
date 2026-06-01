@@ -125,6 +125,9 @@
     "all_asset_classes": "Alle Anlageklassen",
     "all_types": "Alle Typen",
     "all_brokers": "Alle Makler",
+    "split_by_broker": "Nach Makler aufteilen",
+    "split_by_broker_title": "Für jeden Makler, bei dem eine Aktie gehalten wird, eine eigene Zeile anzeigen",
+    "no_broker": "Kein Makler",
     "manage_cash": "Barmittel verwalten",
     "columns": {
       "ticker": "Ticker",
@@ -263,7 +266,7 @@
     "broker_notes_placeholder": "Optionale Beschreibung…",
     "broker_quote_template": "Kurs-URL-Vorlage",
     "broker_quote_template_placeholder": "https://example.com/stocks/{value}",
-    "broker_quote_template_help": "Verwenden Sie {value} als Platzhalter. Leer lassen, um Yahoo Finance zu nutzen.",
+    "broker_quote_template_help": "Verwenden Sie {value} (per Kennung unten) oder ein bestimmtes Feld: {ticker}, {symbol}, {isin}, {exchange}. Leer lassen, um Yahoo Finance zu nutzen.",
     "broker_quote_key": "Zu verwendende Kennung",
     "broker_quote_key_symbol": "Symbol (z. B. VOD.L)",
     "broker_quote_key_ticker": "Tickersymbol (z. B. VOD)",

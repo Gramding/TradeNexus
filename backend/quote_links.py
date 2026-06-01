@@ -6,6 +6,7 @@ non-https URL. The two routes simply load the trade/instrument/broker rows and
 hand them to it.
 """
 import logging
+import re
 import sqlite3
 import urllib.parse
 from typing import Optional
@@ -19,6 +20,11 @@ router = APIRouter(tags=["quote-links"])
 
 # quote_url_key -> the instrument dict field that fills the {value} placeholder.
 _KEY_FIELDS = {"symbol": "symbol", "ticker": "ticker", "isin": "isin"}
+
+# Named placeholders a template may use. {value} is the key-driven one; the rest
+# pull a specific instrument field directly, so a template can target the right
+# identifier per exchange, e.g. ".../{isin}" or ".../{ticker}.{exchange}".
+_PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 
 
 # ---------------------------------------------------------------------------
@@ -41,11 +47,24 @@ def build_quote_url(trade: dict, instrument: Optional[dict], broker: Optional[di
     """
     # 1. Broker deep link -------------------------------------------------------
     if broker is not None and broker.get("quote_url_template") and instrument is not None:
+        template = broker["quote_url_template"]
         key = broker.get("quote_url_key") or "symbol"
-        identifier = instrument.get(_KEY_FIELDS.get(key, "symbol"))
-        if identifier:  # None/empty -> skip to step 2
-            url = broker["quote_url_template"].replace(
-                "{value}", urllib.parse.quote(str(identifier), safe="")
+        # {value} follows the broker's chosen key; the named placeholders map to a
+        # specific instrument field so a template can pick the right id per exchange.
+        subs = {
+            "value":    instrument.get(_KEY_FIELDS.get(key, "symbol")),
+            "ticker":   instrument.get("ticker"),
+            "symbol":   instrument.get("symbol"),
+            "isin":     instrument.get("isin"),
+            "exchange": instrument.get("exchange"),
+        }
+        used = set(_PLACEHOLDER_RE.findall(template))
+        # Build only when every placeholder is known and resolves to a non-empty
+        # value (e.g. a {isin} template on an instrument with no ISIN skips to Yahoo).
+        if used and used <= set(subs) and all(subs[p] for p in used):
+            url = _PLACEHOLDER_RE.sub(
+                lambda m: urllib.parse.quote(str(subs[m.group(1)]), safe=""),
+                template,
             )
             # A misconfigured template (non-https) skips to the Yahoo fallback
             # rather than erroring the whole request.

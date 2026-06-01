@@ -1523,7 +1523,16 @@ const posFilterTicker       = document.getElementById('pos-filter-ticker');
 const posFilterAsset        = document.getElementById('pos-filter-asset');
 const posFilterType         = document.getElementById('pos-filter-type');
 const posFilterBroker       = document.getElementById('pos-filter-broker');
+const posSplitBroker        = document.getElementById('pos-split-broker');
 const btnClearPositionFilters = document.getElementById('btn-clear-position-filters');
+
+// "Split by broker" is a display preference (not a filter), persisted across
+// sessions. Defaults on: holdings spread across brokers show as separate rows.
+posSplitBroker.checked = localStorage.getItem('positionsSplitByBroker') !== '0';
+posSplitBroker.addEventListener('change', () => {
+  localStorage.setItem('positionsSplitByBroker', posSplitBroker.checked ? '1' : '0');
+  applyPositionSort();
+});
 
 // ── Add cash (deposit) ──────────────────────────────────────────────────────────
 const btnAddCash    = document.getElementById('btn-add-cash');
@@ -1758,13 +1767,70 @@ function getFilteredPositions() {
   const asset  = posFilterAsset.value;
   const type   = posFilterType.value;
   const broker = posFilterBroker.value;
-  return currentPositions.filter(p => {
+  let result = currentPositions.filter(p => {
     if (q && !`${p.ticker} ${p.symbol || ''}`.toLowerCase().includes(q)) return false;
     if (asset && (p.asset_class || '') !== asset) return false;
     if (type && p.trade_type !== type) return false;
-    if (broker && !(p.lots || []).some(l => String(l.broker_id) === broker)) return false;
     return true;
   });
+  // A position aggregates lots across brokers. A broker filter re-scopes each
+  // position to that broker's lots (recomputing quantity, cost basis, and value)
+  // and drops positions not held there — rather than keeping whole rows, which
+  // would match every broker for a diversified holding.
+  if (broker) {
+    result = result.map(p => scopePositionToBroker(p, parseInt(broker, 10))).filter(Boolean);
+  } else if (posSplitBroker.checked) {
+    // "Split by broker" off the filter: show one row per broker the stock is held
+    // at, instead of a single aggregated row.
+    result = result.flatMap(splitPositionByBroker);
+  }
+  return result;
+}
+
+// One scoped position per distinct broker in the holding (null = no broker last),
+// or the original row when it has no lots to split.
+function splitPositionByBroker(p) {
+  const ids = [...new Set((p.lots || []).map(l => l.broker_id))]
+    .sort((a, b) => (a == null ? 1 : b == null ? -1 : a - b));
+  const rows = ids.map(id => scopePositionToBroker(p, id)).filter(Boolean);
+  return rows.length ? rows : [p];
+}
+
+// Rebuild a position from only the lots held at `brokerId` (a raw broker id, or
+// null for unbrokered lots), or null if none. Marks the row broker_scoped so the
+// renderer shows which broker it is.
+function scopePositionToBroker(p, brokerId) {
+  const lots = (p.lots || []).filter(l => l.broker_id === brokerId);
+  if (!lots.length) return null;
+  const round10 = x => Math.round(x * 1e10) / 1e10;
+  const qty   = round10(lots.reduce((s, l) => s + l.remaining_quantity, 0));
+  const basis = round10(lots.reduce((s, l) => s + l.remaining_quantity * l.price_per_unit, 0));
+  const price = p.current_price;
+  const value = price != null ? round10(qty * price) : null;
+  const pnl   = value != null ? round10(value - basis) : null;
+  const brokerName = brokerId != null
+    ? (brokersById.get(brokerId)?.name ?? `Broker ${brokerId}`)
+    : i18n.t('positions.no_broker');
+  return {
+    ...p,
+    broker_id:                brokerId,
+    broker_name:              brokerName,
+    broker_color:             brokerId != null ? (brokersById.get(brokerId)?.color ?? null) : null,
+    broker_scoped:            true,
+    lots,
+    total_remaining_quantity: qty,
+    total_cost_basis:         basis,
+    avg_cost_per_unit:        qty ? round10(basis / qty) : 0,
+    current_value:            value,
+    unrealized_pnl:           pnl,
+    unrealized_pnl_pct:       (pnl != null && basis) ? round10(pnl / basis * 100) : null,
+  };
+}
+
+// Small broker chip (color dot + name) shown on broker-scoped position rows.
+function brokerTagHtml(name, color) {
+  const dot = color ? `<span class="pos-broker-dot" style="background:${escHtml(color)}"></span>` : '';
+  return `<span class="pos-broker-tag">${dot}${escHtml(name || '')}</span>`;
 }
 
 function getSortedPositions(base = currentPositions) {
@@ -1879,6 +1945,7 @@ function renderPositionsRows(positions) {
       <td class="ticker-cell">
         ${exchangeBadge(p.exchange)}
         ${tickerLinkHtml(p.ticker, p.name)}
+        ${p.broker_scoped ? brokerTagHtml(p.broker_name, p.broker_color) : ''}
       </td>
       <td>${badge(p.trade_type)}</td>
       <td class="num">${formatNumber(p.total_remaining_quantity)}</td>
@@ -2603,13 +2670,19 @@ let lastQuotePreviewUrl = null;
 function updateQuotePreview() {
   const tpl = brokerQuoteTemplateInput.value.trim();
   const key = brokerQuoteKeyInput.value || 'symbol';
-  if (!tpl || !tpl.includes('{value}')) {
+  // {value} follows the Identifier dropdown; named placeholders map to a field.
+  const samples = {
+    value:    QUOTE_SAMPLE[key] || QUOTE_SAMPLE.symbol,
+    ticker:   'VOD', symbol: 'VOD.L', isin: 'GB00BH4HKS39', exchange: 'LSE',
+  };
+  const used = (tpl.match(/\{(\w+)\}/g) || []).map(s => s.slice(1, -1));
+  const hasUnknown = used.some(p => !(p in samples));
+  if (!tpl || used.length === 0 || hasUnknown) {
     brokerQuotePreviewRow.classList.add('hidden');
     lastQuotePreviewUrl = null;
     return;
   }
-  const sample = QUOTE_SAMPLE[key] || QUOTE_SAMPLE.symbol;
-  const url = tpl.replace('{value}', encodeURIComponent(sample));
+  const url = tpl.replace(/\{(\w+)\}/g, (m, p) => encodeURIComponent(samples[p]));
   brokerQuotePreview.textContent = i18n.t('settings.broker_quote_preview', { url });
   brokerQuotePreviewRow.classList.remove('hidden');
   lastQuotePreviewUrl = url.startsWith('https://') ? url : null;

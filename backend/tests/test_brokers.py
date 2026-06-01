@@ -71,6 +71,18 @@ def test_quote_url_validation(client):
     assert client.put(f"/brokers/{bid}", json={"quote_url_key": "nope"}).status_code == 422
 
 
+def test_quote_url_named_placeholders(client):
+    # A template using a named field placeholder (no {value}) is accepted.
+    b = client.post("/brokers", json={
+        "name": "TR", "quote_url_template": "https://traderepublic.com/{isin}",
+    }).json()
+    assert b["quote_url_template"] == "https://traderepublic.com/{isin}"
+    # An unknown placeholder is rejected.
+    assert client.post("/brokers", json={
+        "name": "BadPh", "quote_url_template": "https://x.com/{wkn}",
+    }).status_code == 422
+
+
 def test_commission_applied_to_trade(client):
     bid = client.post("/brokers", json={
         "name": "B", "commission_flat": 5, "commission_per_unit": 1,

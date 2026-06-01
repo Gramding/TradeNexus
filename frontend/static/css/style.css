@@ -577,6 +577,38 @@ tr.row-flash > td { animation: rowFlash 1.5s ease-out; }
   animation: spin 0.6s linear infinite;
 }
 
+/* ── Per-broker position rows ─────────────────────────────────────────────── */
+.pos-broker-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.pos-broker-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.pos-split-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.pos-split-toggle input { cursor: pointer; }
+
 /* ── Broker quote-link form fields ────────────────────────────────────────── */
 .field-help {
   font-size: 11px;

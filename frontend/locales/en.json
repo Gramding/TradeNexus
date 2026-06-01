@@ -125,6 +125,9 @@
     "all_asset_classes": "All asset classes",
     "all_types": "All types",
     "all_brokers": "All brokers",
+    "split_by_broker": "Split by broker",
+    "split_by_broker_title": "Show a separate row for each broker a stock is held at",
+    "no_broker": "No broker",
     "manage_cash": "Manage cash",
     "columns": {
       "ticker": "Ticker",
@@ -263,7 +266,7 @@
     "broker_notes_placeholder": "Optional description…",
     "broker_quote_template": "Quote URL template",
     "broker_quote_template_placeholder": "https://example.com/stocks/{value}",
-    "broker_quote_template_help": "Use {value} as the placeholder. Leave empty to use Yahoo Finance.",
+    "broker_quote_template_help": "Use {value} (set by Identifier below) or a specific field: {ticker}, {symbol}, {isin}, {exchange}. Leave empty to use Yahoo Finance.",
     "broker_quote_key": "Identifier to use",
     "broker_quote_key_symbol": "Symbol (e.g. VOD.L)",
     "broker_quote_key_ticker": "Ticker (e.g. VOD)",

@@ -41,6 +41,33 @@ def test_empty_identifier_falls_through_to_yahoo():
     assert out["url"] == "https://finance.yahoo.com/quote/AAPL"
 
 
+def test_named_placeholder_isin():
+    broker = {"name": "TR", "quote_url_template": "https://traderepublic.com/{isin}", "quote_url_key": "symbol"}
+    out = build_quote_url({}, INSTR, broker)
+    assert out["source"] == "broker"
+    assert out["url"] == "https://traderepublic.com/GB00BH4HKS39"
+
+
+def test_named_placeholder_composite():
+    broker = {"name": "X", "quote_url_template": "https://x.com/{ticker}.{exchange}", "quote_url_key": "symbol"}
+    inst = {"symbol": "SAP.DE", "ticker": "SAP", "isin": "DE0007164600", "exchange": "GER"}
+    out = build_quote_url({}, inst, broker)
+    assert out["url"] == "https://x.com/SAP.GER"
+
+
+def test_named_placeholder_missing_field_falls_through():
+    # {isin} template on an instrument with no ISIN -> Yahoo fallback.
+    broker = {"name": "TR", "quote_url_template": "https://x.com/{isin}", "quote_url_key": "symbol"}
+    out = build_quote_url({}, {"symbol": "AAPL", "ticker": "AAPL", "isin": None}, broker)
+    assert out["source"] == "yahoo"
+
+
+def test_unknown_placeholder_falls_through():
+    broker = {"name": "X", "quote_url_template": "https://x.com/{wkn}", "quote_url_key": "symbol"}
+    out = build_quote_url({}, INSTR, broker)
+    assert out["source"] == "yahoo"
+
+
 def test_non_https_template_falls_through():
     broker = {"name": "Bad", "quote_url_template": "http://insecure.com/{value}", "quote_url_key": "ticker"}
     out = build_quote_url({}, INSTR, broker)
