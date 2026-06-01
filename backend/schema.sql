@@ -18,10 +18,23 @@ CREATE TABLE IF NOT EXISTS brokers (
     created_at          TEXT     NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS instruments (
+    id          INTEGER  PRIMARY KEY,
+    symbol      TEXT     NOT NULL UNIQUE,             -- Yahoo Finance symbol, e.g. "VOD.L", "BTC-USD", "EURUSD=X"
+    ticker      TEXT     NOT NULL,                    -- display name the user sees, e.g. "VOD", "BTC", "EUR/USD"
+    name        TEXT,                                 -- full name, e.g. "Vodafone Group Plc", "Bitcoin USD"
+    exchange    TEXT,                                 -- e.g. "LSE", "NASDAQ", "CCY"
+    asset_class TEXT     NOT NULL DEFAULT 'stock',    -- stock, etf, crypto, forex, futures, option, other
+    currency    TEXT     NOT NULL DEFAULT 'USD',      -- native currency of the instrument
+    isin        TEXT,                                 -- optional, for stocks/ETFs
+    created_at  TEXT     NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS trades (
     id                 INTEGER  PRIMARY KEY AUTOINCREMENT,
     user_id            INTEGER  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     broker_id          INTEGER  REFERENCES brokers(id),
+    instrument_id      INTEGER  REFERENCES instruments(id),
     ticker             TEXT     NOT NULL,
     trade_type         TEXT     NOT NULL,  -- soft reference to trade_types.name; enforced in the route layer
     action             TEXT     NOT NULL CHECK (action IN ('buy', 'sell')),
@@ -61,12 +74,12 @@ CREATE TABLE IF NOT EXISTS cash_pool (
 
 CREATE TABLE IF NOT EXISTS price_cache (
     id         INTEGER  PRIMARY KEY AUTOINCREMENT,
-    ticker     TEXT     NOT NULL,
+    symbol     TEXT     NOT NULL,                    -- Yahoo Finance symbol, e.g. "VOD.L", "BTC-USD"
     price      REAL     NOT NULL,
     currency   TEXT     NOT NULL DEFAULT 'USD',
     fetched_at TEXT     NOT NULL DEFAULT (datetime('now')),
     source     TEXT     NOT NULL DEFAULT 'yahoo_finance',
-    UNIQUE(ticker, source)
+    UNIQUE(symbol, source)
 );
 
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -78,5 +91,6 @@ CREATE TABLE IF NOT EXISTS trade_types (
     id         INTEGER  PRIMARY KEY,
     name       TEXT     NOT NULL UNIQUE,            -- e.g. "Stock", "Call", "Put", "Other"
     is_default INTEGER  NOT NULL DEFAULT 0,         -- 1 = seeded by the app, 0 = user-created
+    color      TEXT,                                -- optional "#rrggbb" for charts/badges
     created_at TEXT     NOT NULL DEFAULT (datetime('now'))
 );

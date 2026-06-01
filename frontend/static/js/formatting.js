@@ -9,7 +9,9 @@
 const appSettings = {
   display_name: 'Trader',
   currency: 'USD',
+  language: 'en',
   date_format: 'MM/DD/YYYY',
+  date_format_manual_override: '0',
   decimal_separator: '.',
   price_refresh_interval_minutes: '15',
   default_broker_id: '',
@@ -68,6 +70,7 @@ function formatDate(isoString, formatOverride) {
   const [, y, mo, d] = m;
   switch (formatOverride || appSettings.date_format) {
     case 'DD/MM/YYYY': return `${d}/${mo}/${y}`;
+    case 'DD.MM.YYYY': return `${d}.${mo}.${y}`;
     case 'YYYY-MM-DD': return `${y}-${mo}-${d}`;
     case 'MM/DD/YYYY':
     default:           return `${mo}/${d}/${y}`;

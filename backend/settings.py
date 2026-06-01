@@ -17,16 +17,20 @@ router = APIRouter(tags=["settings"])
 SQLITE_MAGIC = b"SQLite format 3\x00"
 
 # The settings that may be read/written, with per-key validation.
-DATE_FORMATS = {"MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"}
+DATE_FORMATS = {"MM/DD/YYYY", "DD/MM/YYYY", "DD.MM.YYYY", "YYYY-MM-DD"}
 REFRESH_INTERVALS = {5, 15, 30, 60}
+# UI languages we ship locale files for (frontend/locales/*.json).
+SUPPORTED_LANGUAGES = {"en", "de"}
 ALLOWED_SETTINGS = {
     "display_name",
     "currency",
+    "language",
     "date_format",
     "decimal_separator",
     "price_refresh_interval_minutes",
     "default_broker_id",
     "fiscal_year_start_month",
+    "date_format_manual_override",
 }
 
 
@@ -62,6 +66,16 @@ def _validate_setting(key: str, value) -> str:
         if value not in DATE_FORMATS:
             raise HTTPException(status_code=400, detail=f"date_format must be one of {sorted(DATE_FORMATS)}.")
         return value
+
+    if key == "language":
+        if value not in SUPPORTED_LANGUAGES:
+            raise HTTPException(status_code=400, detail=f"language must be one of {sorted(SUPPORTED_LANGUAGES)}.")
+        return value
+
+    if key == "date_format_manual_override":
+        if str(value) not in ("0", "1"):
+            raise HTTPException(status_code=400, detail="date_format_manual_override must be '0' or '1'.")
+        return str(value)
 
     # display_name, currency, default_broker_id: free-form strings.
     return "" if value is None else str(value)
@@ -101,6 +115,10 @@ def update_settings(payload: dict = Body(...)):
                 (key, value),
             )
         conn.commit()
+        # Cached stats are computed against the configured fiscal-year start, so a
+        # change to it must drop the cache or the next read serves a stale window.
+        if "fiscal_year_start_month" in normalized:
+            stats_cache.invalidate_all()
         return _read_all_settings(conn)
     except sqlite3.Error as exc:
         logger.error("update_settings DB error: %s", exc)

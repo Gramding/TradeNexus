@@ -17,6 +17,7 @@ from db import get_connection
 from backup import run_startup_backup
 from init_db import ensure_initialized
 import brokers as brokers_module
+import instruments as instruments_module
 import prices as prices_module
 import settings as settings_module
 import stats_cache
@@ -39,6 +40,7 @@ except Exception:
 
 app = FastAPI(title="TradeNexus")
 app.include_router(brokers_module.router)
+app.include_router(instruments_module.router)
 app.include_router(prices_module.router)
 app.include_router(settings_module.router)
 app.include_router(trade_types_module.router)
@@ -107,17 +109,21 @@ def _validate_iso_date(value, field: str):
         raise HTTPException(status_code=400, detail=f"{field} must be an ISO date (YYYY-MM-DD).")
 
 
-# Reusable SELECT that joins broker name + color; used by list/create/update trade routes.
+# Reusable SELECT that joins broker name + color and the linked instrument; used
+# by list/create/update trade routes.
 # Columns: 0=id 1=user_id 2=ticker 3=trade_type 4=action 5=quantity
 #          6=price_per_unit 7=total_value 8=trade_date 9=notes 10=created_at
 #          11=status 12=remaining_quantity 13=broker_id 14=broker_name 15=broker_color
 #          16=commission 17=net_total_value
+#          18=instr_symbol 19=instr_name 20=instr_exchange 21=instr_asset_class 22=instr_currency
 _TRADE_SELECT = (
     "SELECT t.id, t.user_id, t.ticker, t.trade_type, t.action, t.quantity, "
     "t.price_per_unit, t.total_value, t.trade_date, t.notes, t.created_at, "
     "t.status, t.remaining_quantity, t.broker_id, b.name, b.color, "
-    "t.commission, t.net_total_value "
-    "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id"
+    "t.commission, t.net_total_value, "
+    "i.symbol, i.name, i.exchange, i.asset_class, i.currency "
+    "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
+    "LEFT JOIN instruments i ON t.instrument_id = i.id"
 )
 
 
@@ -182,6 +188,11 @@ def _row_to_trade(r) -> dict:
         "broker_color":       r[15],
         "commission":         float(r[16]) if r[16] is not None else 0.0,
         "net_total_value":    float(r[17]) if r[17] is not None else None,
+        "symbol":             r[18],
+        "name":               r[19],
+        "exchange":           r[20],
+        "asset_class":        r[21],
+        "currency":           r[22],
     }
 
 
@@ -251,6 +262,12 @@ def _require_broker(cur: sqlite3.Cursor, broker_id: int):
         raise HTTPException(status_code=404, detail=f"Broker {broker_id} not found.")
 
 
+def _require_instrument(cur: sqlite3.Cursor, instrument_id: int):
+    cur.execute("SELECT id FROM instruments WHERE id = ?", (instrument_id,))
+    if cur.fetchone() is None:
+        raise HTTPException(status_code=404, detail=f"Instrument {instrument_id} not found.")
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -270,6 +287,7 @@ class TradeCreate(BaseModel):
     notes: Optional[str] = None
     broker_id: Optional[int] = None
     commission: Optional[float] = None  # None = auto-calc from broker
+    instrument_id: Optional[int] = None  # set when picked from the instrument search
 
 
 class TradeUpdate(BaseModel):
@@ -516,18 +534,20 @@ def create_trade(user_id: int, body: TradeCreate):
         trade_type = _normalize_trade_type(cur, body.trade_type)
         if body.broker_id is not None:
             _require_broker(cur, body.broker_id)
+        if body.instrument_id is not None:
+            _require_instrument(cur, body.instrument_id)
 
         commission      = _compute_commission(cur, body.broker_id, body.quantity, body.commission)
         net_total_value = _net_total(body.action, total_value, commission)
 
         cur.execute(
             "INSERT INTO trades "
-            "(user_id, broker_id, ticker, trade_type, action, quantity, price_per_unit, total_value, "
-            "trade_date, notes, remaining_quantity, commission, net_total_value) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(user_id, broker_id, instrument_id, ticker, trade_type, action, quantity, price_per_unit, "
+            "total_value, trade_date, notes, remaining_quantity, commission, net_total_value) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                user_id, body.broker_id, body.ticker.strip().upper(), trade_type, body.action,
-                body.quantity, body.price_per_unit, total_value,
+                user_id, body.broker_id, body.instrument_id, body.ticker.strip().upper(),
+                trade_type, body.action, body.quantity, body.price_per_unit, total_value,
                 body.trade_date.isoformat(), body.notes, body.quantity,
                 commission, net_total_value,
             ),
@@ -1415,10 +1435,12 @@ def get_user_growth(
             cur = conn.cursor()
             _require_user(cur, user_id)
 
-            # Restructured so each user's buy trades and sell lots are filtered into
-            # a CTE first; the correlated date-cutoff aggregates then run over those
-            # small per-user sets instead of re-scanning all trades with a user_id
-            # predicate four times.
+            # Both series are running totals over time, so instead of recomputing a
+            # full SUM for every event date (O(dates × trades) — the old correlated
+            # subqueries), collapse each side to a per-date delta in one pass and
+            # accumulate in Python below. A buy contributes a fixed amount on its
+            # trade_date (its current remaining value, for open/partial lots); a sell
+            # contributes its realized P&L on its sell_date.
             cur.execute(
                 """
                 WITH user_buys AS (
@@ -1432,39 +1454,28 @@ def get_user_growth(
                     FROM   sell_lots sl
                     JOIN   trades    t ON sl.buy_trade_id = t.id
                     WHERE  t.user_id = ?
-                ),
-                event_dates AS (
-                    -- Every day something changed: a buy was entered or a sell recorded.
-                    SELECT DISTINCT trade_date AS date FROM user_buys
-                    UNION
-                    SELECT DISTINCT sell_date  AS date FROM user_sells
                 )
-                SELECT
-                    ed.date,
-
-                    -- Cost basis: unrealised value of all open/partial buy lots entered
-                    -- on or before this date, scaled by current remaining_quantity.
-                    COALESCE((
-                        SELECT SUM(
-                            b.remaining_quantity
-                            * COALESCE(b.net_total_value, b.total_value + b.commission)
-                            / NULLIF(b.quantity, 0)
-                        )
-                        FROM   user_buys b
-                        WHERE  b.status     IN ('open', 'partial')
-                          AND  b.trade_date <= ed.date
-                    ), 0.0) AS cost_basis,
-
-                    -- Realised P&L: running total of sell lots closed on or before this
-                    -- date (realized_pnl is already commission-adjusted at write time).
-                    COALESCE((
-                        SELECT SUM(s.realized_pnl)
-                        FROM   user_sells s
-                        WHERE  s.sell_date <= ed.date
-                    ), 0.0) AS realized_pnl
-
-                FROM  event_dates ed
-                ORDER BY ed.date
+                SELECT date, SUM(cost_basis_delta) AS cost_basis_delta,
+                             SUM(realized_pnl_delta) AS realized_pnl_delta
+                FROM (
+                    SELECT trade_date AS date,
+                           SUM(CASE WHEN status IN ('open', 'partial')
+                                    THEN remaining_quantity
+                                         * COALESCE(net_total_value, total_value + commission)
+                                         / NULLIF(quantity, 0)
+                                    ELSE 0 END) AS cost_basis_delta,
+                           0.0 AS realized_pnl_delta
+                    FROM   user_buys
+                    GROUP  BY trade_date
+                    UNION ALL
+                    SELECT sell_date AS date,
+                           0.0 AS cost_basis_delta,
+                           SUM(realized_pnl) AS realized_pnl_delta
+                    FROM   user_sells
+                    GROUP  BY sell_date
+                )
+                GROUP BY date
+                ORDER BY date
                 """,
                 (user_id, user_id),
             )
@@ -1477,14 +1488,19 @@ def get_user_growth(
         finally:
             conn.close()
 
-        full = [
-            {
-                "date":         r[0],
-                "cost_basis":   float(r[1]),
-                "realized_pnl": float(r[2]),
-            }
-            for r in rows
-        ]
+        # Accumulate the per-date deltas into the running cost-basis / realized-P&L
+        # series. Equivalent to the old cumulative SUMs, but single-pass.
+        full = []
+        cost_basis = 0.0
+        realized_pnl = 0.0
+        for date, cb_delta, pnl_delta in rows:
+            cost_basis   += cb_delta or 0.0
+            realized_pnl += pnl_delta or 0.0
+            full.append({
+                "date":         date,
+                "cost_basis":   cost_basis,
+                "realized_pnl": realized_pnl,
+            })
         stats_cache.set_growth(user_id, full)
 
     if cutoff is None:

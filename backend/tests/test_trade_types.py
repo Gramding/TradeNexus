@@ -4,7 +4,9 @@ from conftest import make_trade
 def test_default_types_seeded_and_ordered(client):
     types = client.get("/trade-types").json()
     names = [t["name"] for t in types]
-    assert set(names) == {"Stock", "Call", "Put", "Other"}
+    # Asset-class-aligned defaults (ETF/Crypto/Forex/Futures) plus the original
+    # option/other set, so an instrument's asset_class can auto-fill the type.
+    assert set(names) == {"Stock", "ETF", "Crypto", "Forex", "Futures", "Call", "Put", "Other"}
     # is_default DESC, then name ASC -> all defaults, alphabetical
     assert names == sorted(names)
     assert all(t["is_default"] == 1 for t in types)

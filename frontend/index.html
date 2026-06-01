@@ -16,16 +16,16 @@
     <aside id="sidebar">
       <div id="sidebar-header">
         <span class="logo">TradeNexus</span>
-        <button id="btn-add-user" class="icon-btn" title="Add user" aria-label="Add user"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+        <button id="btn-add-user" class="icon-btn" data-i18n-title="app.add_user" title="Add user" aria-label="Add user"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
       </div>
 
       <div id="add-user-form" class="hidden">
-        <input id="new-user-name"  type="text"  placeholder="Name"  autocomplete="off" />
-        <input id="new-user-email" type="email" placeholder="Email" autocomplete="off" />
+        <input id="new-user-name"  type="text"  data-i18n-placeholder="common.name"  placeholder="Name"  autocomplete="off" />
+        <input id="new-user-email" type="email" data-i18n-placeholder="common.email" placeholder="Email" autocomplete="off" />
         <div id="add-user-error" class="inline-error hidden"></div>
         <div class="form-row">
-          <button id="btn-save-user">Save</button>
-          <button id="btn-cancel-user" class="secondary">Cancel</button>
+          <button id="btn-save-user" data-i18n="common.save">Save</button>
+          <button id="btn-cancel-user" class="secondary" data-i18n="common.cancel">Cancel</button>
         </div>
       </div>
 
@@ -36,24 +36,23 @@
       <ul id="user-list"></ul>
 
       <div id="settings-nav">
-        <div class="settings-nav-header">Settings</div>
+        <div class="settings-nav-header" data-i18n="settings.title">Settings</div>
         <ul class="settings-nav-list">
-          <li class="settings-nav-item" data-page="general">General</li>
-          <li class="settings-nav-item" data-page="brokers">Brokers</li>
-          <li class="settings-nav-item" data-page="trade-types">Trade Types</li>
-          <li class="settings-nav-item" data-page="data">Data</li>
+          <li class="settings-nav-item" data-page="brokers" data-i18n="settings.brokers">Brokers</li>
+          <li class="settings-nav-item" data-page="trade-types" data-i18n="settings.trade_types">Trade Types</li>
+          <li class="settings-nav-item" data-page="data" data-i18n="settings.data">Data</li>
         </ul>
       </div>
 
       <div id="sidebar-footer">
-        <button id="btn-settings"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>Settings</button>
+        <button id="btn-settings"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg><span data-i18n="settings.title">Settings</span></button>
       </div>
     </aside>
 
     <!-- Main panel -->
     <main id="main">
       <div id="empty-state">
-        <p>Select a user to view their trades.</p>
+        <p data-i18n="app.select_user">Select a user to view their trades.</p>
       </div>
 
       <div id="user-panel" class="hidden">
@@ -68,43 +67,44 @@
             <div id="search-input-wrap">
               <svg class="icon icon-search-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
               <input id="search-input" type="text" autocomplete="off"
+                     data-i18n-placeholder="search.placeholder"
                      placeholder="Search trades, positions, transactions..." />
               <span id="search-spinner" class="search-spinner hidden"></span>
             </div>
             <div id="search-results" class="hidden"></div>
           </div>
 
-          <button id="btn-delete-user" class="danger-outline" title="Delete user">Delete user</button>
+          <button id="btn-delete-user" class="danger-outline" data-i18n="app.delete_user" data-i18n-title="app.delete_user" title="Delete user">Delete user</button>
         </header>
 
         <nav id="tabs">
-          <button class="tab-btn active" data-tab="trades">Trades</button>
-          <button class="tab-btn" data-tab="add-trade">Add Trade</button>
-          <button class="tab-btn" data-tab="positions">Positions</button>
-          <button class="tab-btn" data-tab="cash">Cash</button>
-          <button class="tab-btn" data-tab="analytics">Analytics</button>
+          <button class="tab-btn active" data-tab="trades" data-i18n="nav.trades">Trades</button>
+          <button class="tab-btn" data-tab="add-trade" data-i18n="nav.add_trade">Add Trade</button>
+          <button class="tab-btn" data-tab="positions" data-i18n="nav.positions">Positions</button>
+          <button class="tab-btn" data-tab="cash" data-i18n="nav.cash">Cash</button>
+          <button class="tab-btn" data-tab="analytics" data-i18n="nav.analytics">Analytics</button>
         </nav>
 
         <!-- Trades tab -->
         <div id="tab-trades" class="tab-panel active">
           <div id="trade-filters">
-            <input  id="filter-ticker"     type="text" placeholder="Ticker…" autocomplete="off" />
+            <input  id="filter-ticker"     type="text" data-i18n-placeholder="trades.filter_ticker" placeholder="Ticker…" autocomplete="off" />
             <select id="filter-trade-type">
-              <option value="">All types</option>
+              <option value="" data-i18n="trades.all_types">All types</option>
             </select>
             <select id="filter-action">
-              <option value="">All actions</option>
-              <option value="buy">Buy</option>
-              <option value="sell">Sell</option>
+              <option value="" data-i18n="trades.all_actions">All actions</option>
+              <option value="buy" data-i18n="trades.actions.buy">Buy</option>
+              <option value="sell" data-i18n="trades.actions.sell">Sell</option>
             </select>
             <div class="date-filter">
-              <label for="filter-date-from">From</label>
-              <input id="filter-date-from" type="date" title="Show trades on or after this date" />
-              <label for="filter-date-to">To</label>
-              <input id="filter-date-to" type="date" title="Show trades on or before this date" />
+              <label for="filter-date-from" data-i18n="common.from">From</label>
+              <input id="filter-date-from" type="date" data-i18n-title="trades.date_from_title" title="Show trades on or after this date" />
+              <label for="filter-date-to" data-i18n="common.to">To</label>
+              <input id="filter-date-to" type="date" data-i18n-title="trades.date_to_title" title="Show trades on or before this date" />
             </div>
-            <button id="btn-clear-filters" class="secondary">Clear</button>
-            <button id="btn-export-csv" class="secondary" title="Download all trades as CSV"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV</button>
+            <button id="btn-clear-filters" class="secondary" data-i18n="common.clear">Clear</button>
+            <button id="btn-export-csv" class="secondary" data-i18n-title="trades.export_csv_title" title="Download all trades as CSV"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span data-i18n="trades.export_csv">Export CSV</span></button>
           </div>
 
           <div id="trades-spinner" class="spinner-wrap hidden">
@@ -121,22 +121,22 @@
             <table id="trades-table">
               <thead>
                 <tr>
-                  <th data-sort-key="date">Date<span class="sort-arrow"></span></th>
-                  <th data-sort-key="ticker">Ticker<span class="sort-arrow"></span></th>
-                  <th data-sort-key="type">Type<span class="sort-arrow"></span></th>
-                  <th data-sort-key="action">Action<span class="sort-arrow"></span></th>
-                  <th class="num" data-sort-key="quantity">Qty<span class="sort-arrow"></span></th>
-                  <th class="num" data-sort-key="price">Price<span class="sort-arrow"></span></th>
-                  <th class="num" data-sort-key="total">Total<span class="sort-arrow"></span></th>
-                  <th class="num" data-sort-key="commission">Commission<span class="sort-arrow"></span></th>
-                  <th class="num" data-sort-key="net">Net Value<span class="sort-arrow"></span></th>
-                  <th>Notes</th>
+                  <th data-sort-key="date"><span data-i18n="trades.columns.date">Date</span><span class="sort-arrow"></span></th>
+                  <th data-sort-key="ticker"><span data-i18n="trades.columns.ticker">Ticker</span><span class="sort-arrow"></span></th>
+                  <th data-sort-key="type"><span data-i18n="trades.columns.type">Type</span><span class="sort-arrow"></span></th>
+                  <th data-sort-key="action"><span data-i18n="trades.columns.action">Action</span><span class="sort-arrow"></span></th>
+                  <th class="num" data-sort-key="quantity"><span data-i18n="trades.columns.qty">Qty</span><span class="sort-arrow"></span></th>
+                  <th class="num" data-sort-key="price"><span data-i18n="trades.columns.price">Price</span><span class="sort-arrow"></span></th>
+                  <th class="num" data-sort-key="total"><span data-i18n="trades.columns.total">Total</span><span class="sort-arrow"></span></th>
+                  <th class="num" data-sort-key="commission"><span data-i18n="trades.columns.commission">Commission</span><span class="sort-arrow"></span></th>
+                  <th class="num" data-sort-key="net"><span data-i18n="trades.columns.net">Net Value</span><span class="sort-arrow"></span></th>
+                  <th data-i18n="trades.columns.notes">Notes</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody id="trades-tbody"></tbody>
             </table>
-            <p id="trades-empty" class="placeholder hidden">No trades found.</p>
+            <p id="trades-empty" class="placeholder hidden" data-i18n="trades.empty">No trades found.</p>
           </div>
 
           <div id="trades-loadmore" class="list-loadmore hidden"></div>
@@ -146,43 +146,51 @@
         <div id="tab-add-trade" class="tab-panel hidden">
           <form id="add-trade-form">
             <div class="field-group">
-              <div class="field">
-                <label for="trade-ticker">Ticker</label>
-                <input id="trade-ticker" type="text" placeholder="e.g. AAPL" autocomplete="off" required />
+              <div class="field instrument-field">
+                <label for="trade-instrument" data-i18n="trade_form.instrument">Instrument</label>
+                <div id="instrument-combobox" class="combobox">
+                  <input id="trade-instrument" type="text" data-i18n-placeholder="trade_form.instrument_placeholder" placeholder="Search name or ticker…"
+                         autocomplete="off" role="combobox" aria-autocomplete="list"
+                         aria-expanded="false" aria-controls="instrument-dropdown" required />
+                  <div id="instrument-dropdown" class="combobox-dropdown hidden" role="listbox"></div>
+                </div>
+                <input type="hidden" id="trade-instrument-id" />
+                <div id="instrument-chip" class="instrument-chip hidden"></div>
+                <p class="field-hint" data-i18n="trade_form.instrument_hint_long">Search by name or ticker. Select from the list for price lookup, or type freely for unlisted instruments.</p>
               </div>
               <div class="field">
-                <label for="trade-type">Type</label>
+                <label for="trade-type" data-i18n="trade_form.trade_type">Type</label>
                 <select id="trade-type" required>
-                  <option value="">Select…</option>
+                  <option value="" data-i18n="common.select">Select…</option>
                 </select>
               </div>
               <div class="field">
-                <label for="trade-action">Action</label>
+                <label for="trade-action" data-i18n="trade_form.action">Action</label>
                 <select id="trade-action" required>
-                  <option value="">Select…</option>
-                  <option value="buy">Buy</option>
-                  <option value="sell">Sell</option>
+                  <option value="" data-i18n="common.select">Select…</option>
+                  <option value="buy" data-i18n="trades.actions.buy">Buy</option>
+                  <option value="sell" data-i18n="trades.actions.sell">Sell</option>
                 </select>
               </div>
             </div>
 
             <div class="field-group">
               <div class="field">
-                <label for="trade-quantity">Quantity</label>
+                <label for="trade-quantity" data-i18n="trade_form.quantity">Quantity</label>
                 <input id="trade-quantity" type="number" min="0.0001" step="any" placeholder="0" required />
               </div>
               <div class="field">
-                <label for="trade-price">Price per unit ($)</label>
+                <label for="trade-price" data-i18n="trade_form.price_per_unit">Price per unit ($)</label>
                 <input id="trade-price" type="number" min="0" step="any" placeholder="0.00" required />
               </div>
               <div class="field">
-                <label for="trade-date">Trade date</label>
+                <label for="trade-date" data-i18n="trade_form.trade_date">Trade date</label>
                 <input id="trade-date" type="date" required />
               </div>
               <div class="field">
-                <label for="trade-broker">Broker</label>
+                <label for="trade-broker" data-i18n="trade_form.broker">Broker</label>
                 <select id="trade-broker">
-                  <option value="">— None —</option>
+                  <option value="" data-i18n="common.none">— None —</option>
                 </select>
               </div>
             </div>
@@ -193,10 +201,10 @@
 
             <div class="field commission-field">
               <div class="commission-label-row">
-                <label for="trade-commission">Estimated commission</label>
+                <label for="trade-commission" data-i18n="trade_form.estimated_commission">Estimated commission</label>
                 <label class="override-toggle">
                   <input type="checkbox" id="trade-commission-override" />
-                  <span>Override</span>
+                  <span data-i18n="trade_form.commission_override">Override</span>
                 </label>
               </div>
               <input id="trade-commission" type="number" min="0" step="0.01" value="0" readonly />
@@ -204,20 +212,20 @@
             </div>
 
             <div class="field">
-              <label for="trade-notes">Notes</label>
-              <textarea id="trade-notes" rows="3" placeholder="Optional notes…"></textarea>
+              <label for="trade-notes" data-i18n="trade_form.notes">Notes</label>
+              <textarea id="trade-notes" rows="3" data-i18n-placeholder="common.optional_notes" placeholder="Optional notes…"></textarea>
             </div>
 
             <div class="field" id="total-preview-wrap">
-              <span class="label-like">Total value</span>
+              <span class="label-like" data-i18n="trade_form.total_value">Total value</span>
               <span id="total-preview">—</span>
             </div>
 
             <div id="add-trade-error" class="inline-error hidden"></div>
 
             <div class="form-row">
-              <button type="submit" id="btn-submit-trade">Add Trade</button>
-              <button type="button" id="btn-reset-trade" class="secondary">Reset</button>
+              <button type="submit" id="btn-submit-trade" data-i18n="trade_form.submit">Add Trade</button>
+              <button type="button" id="btn-reset-trade" class="secondary" data-i18n="common.reset">Reset</button>
             </div>
           </form>
         </div>
@@ -231,29 +239,37 @@
 
           <div id="positions-content" class="hidden">
             <div id="positions-toolbar">
-              <button id="btn-refresh-prices" class="secondary"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg>Refresh Prices</button>
+              <button id="btn-refresh-prices" class="secondary"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></svg><span data-i18n="positions.refresh_prices">Refresh Prices</span></button>
               <span id="prices-last-updated" class="prices-meta"></span>
             </div>
 
+            <div id="position-filters">
+              <input  id="pos-filter-ticker" type="text" data-i18n-placeholder="positions.filter_ticker" placeholder="Ticker…" autocomplete="off" />
+              <select id="pos-filter-asset"><option value="" data-i18n="positions.all_asset_classes">All asset classes</option></select>
+              <select id="pos-filter-type"><option value="" data-i18n="positions.all_types">All types</option></select>
+              <select id="pos-filter-broker"><option value="" data-i18n="positions.all_brokers">All brokers</option></select>
+              <button id="btn-clear-position-filters" class="secondary" data-i18n="common.clear">Clear</button>
+            </div>
+
             <div id="positions-cash-row">
-              <span class="stat-label">Cash Balance</span>
+              <span class="stat-label" data-i18n="dashboard.cash_balance">Cash Balance</span>
               <span id="positions-cash-balance" class="cash-balance-value">—</span>
-              <button type="button" class="secondary" data-tab="cash" id="btn-goto-cash">Manage cash<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button>
+              <button type="button" class="secondary" data-tab="cash" id="btn-goto-cash"><span data-i18n="positions.manage_cash">Manage cash</span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button>
             </div>
 
             <div id="positions-table-wrap">
               <table id="positions-table">
                 <thead>
                   <tr>
-                    <th data-sort-key="ticker">Ticker<span class="sort-arrow"></span></th>
-                    <th data-sort-key="type">Type<span class="sort-arrow"></span></th>
-                    <th class="num" data-sort-key="qty">Remaining Qty<span class="sort-arrow"></span></th>
-                    <th class="num" data-sort-key="avgcost">Avg Cost<span class="sort-arrow"></span></th>
-                    <th class="num" data-sort-key="basis">Cost Basis<span class="sort-arrow"></span></th>
-                    <th class="num" data-sort-key="price">Current Price<span class="sort-arrow"></span></th>
-                    <th class="num" data-sort-key="value">Current Value<span class="sort-arrow"></span></th>
-                    <th class="num" data-sort-key="pnl">Unrealized P&amp;L<span class="sort-arrow"></span></th>
-                    <th class="num" data-sort-key="pnlpct">P&amp;L %<span class="sort-arrow"></span></th>
+                    <th data-sort-key="ticker"><span data-i18n="positions.columns.ticker">Ticker</span><span class="sort-arrow"></span></th>
+                    <th data-sort-key="type"><span data-i18n="positions.columns.type">Type</span><span class="sort-arrow"></span></th>
+                    <th class="num" data-sort-key="qty"><span data-i18n="positions.columns.remaining_qty">Remaining Qty</span><span class="sort-arrow"></span></th>
+                    <th class="num" data-sort-key="avgcost"><span data-i18n="positions.columns.avg_cost">Avg Cost</span><span class="sort-arrow"></span></th>
+                    <th class="num" data-sort-key="basis"><span data-i18n="positions.columns.cost_basis">Cost Basis</span><span class="sort-arrow"></span></th>
+                    <th class="num" data-sort-key="price"><span data-i18n="positions.columns.current_price">Current Price</span><span class="sort-arrow"></span></th>
+                    <th class="num" data-sort-key="value"><span data-i18n="positions.columns.current_value">Current Value</span><span class="sort-arrow"></span></th>
+                    <th class="num" data-sort-key="pnl"><span data-i18n="positions.columns.unrealized_pnl">Unrealized P&amp;L</span><span class="sort-arrow"></span></th>
+                    <th class="num" data-sort-key="pnlpct"><span data-i18n="positions.columns.unrealized_pnl_pct">P&amp;L %</span><span class="sort-arrow"></span></th>
                     <th></th>
                   </tr>
                 </thead>
@@ -267,14 +283,14 @@
         <!-- Cash tab -->
         <div id="tab-cash" class="tab-panel hidden">
           <div id="cash-balance-row">
-            <span class="stat-label">Cash Balance</span>
+            <span class="stat-label" data-i18n="dashboard.cash_balance">Cash Balance</span>
             <span id="cash-balance-value" class="cash-balance-value">—</span>
-            <button type="button" id="btn-add-cash" class="secondary"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Add cash</button>
+            <button type="button" id="btn-add-cash" class="secondary"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg><span data-i18n="cash.add_cash">Add cash</span></button>
             <form id="add-cash-form" class="add-cash-form hidden">
-              <input id="add-cash-amount" type="number" min="0.01" step="0.01" placeholder="Amount" />
-              <input id="add-cash-note" type="text" placeholder="Note (optional)" autocomplete="off" />
-              <button type="submit" id="btn-save-cash">Add</button>
-              <button type="button" id="btn-cancel-cash" class="secondary">Cancel</button>
+              <input id="add-cash-amount" type="number" min="0.01" step="0.01" data-i18n-placeholder="cash.amount" placeholder="Amount" />
+              <input id="add-cash-note" type="text" data-i18n-placeholder="cash.note_optional" placeholder="Note (optional)" autocomplete="off" />
+              <button type="submit" id="btn-save-cash" data-i18n="common.add">Add</button>
+              <button type="button" id="btn-cancel-cash" class="secondary" data-i18n="common.cancel">Cancel</button>
             </form>
           </div>
 
@@ -292,15 +308,15 @@
             <table id="cash-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Type</th>
-                  <th class="num">Amount</th>
-                  <th>Note</th>
+                  <th data-i18n="cash.columns.date">Date</th>
+                  <th data-i18n="cash.columns.type">Type</th>
+                  <th class="num" data-i18n="cash.columns.amount">Amount</th>
+                  <th data-i18n="cash.columns.note">Note</th>
                 </tr>
               </thead>
               <tbody id="cash-tbody"></tbody>
             </table>
-            <p id="cash-empty" class="placeholder hidden">No cash transactions yet.</p>
+            <p id="cash-empty" class="placeholder hidden" data-i18n="cash.empty">No cash transactions yet.</p>
           </div>
 
           <div id="cash-loadmore" class="list-loadmore hidden"></div>
@@ -316,50 +332,50 @@
           <div id="analytics-content" class="hidden">
             <div id="stat-cards">
               <div class="stat-card">
-                <div class="stat-label">Total Trades</div>
+                <div class="stat-label" data-i18n="analytics.total_trades">Total Trades</div>
                 <div class="stat-value" id="stat-total-trades">—</div>
               </div>
               <div class="stat-card">
-                <div class="stat-label">Buy Volume</div>
+                <div class="stat-label" data-i18n="analytics.buy_volume">Buy Volume</div>
                 <div class="stat-value" id="stat-buy-volume">—</div>
               </div>
               <div class="stat-card">
-                <div class="stat-label">Sell Volume</div>
+                <div class="stat-label" data-i18n="analytics.sell_volume">Sell Volume</div>
                 <div class="stat-value" id="stat-sell-volume">—</div>
               </div>
               <div class="stat-card">
-                <div class="stat-label">Net Position</div>
+                <div class="stat-label" data-i18n="analytics.net_position">Net Position</div>
                 <div class="stat-value" id="stat-net-position">—</div>
               </div>
               <div class="stat-card">
-                <div class="stat-label">Total Commissions Paid</div>
+                <div class="stat-label" data-i18n="analytics.total_commissions">Total Commissions Paid</div>
                 <div class="stat-value" id="stat-total-commissions">—</div>
               </div>
               <div class="stat-card">
-                <div class="stat-label">Net Realized P&amp;L</div>
+                <div class="stat-label" data-i18n="analytics.net_realized_pnl">Net Realized P&amp;L</div>
                 <div class="stat-value" id="stat-net-realized-pnl">—</div>
               </div>
               <div class="stat-card">
-                <div class="stat-label">This fiscal year</div>
+                <div class="stat-label" data-i18n="analytics.fiscal_year_volume">This fiscal year</div>
                 <div class="stat-value" id="stat-fiscal-volume">—</div>
                 <div class="stat-subtitle" id="stat-fiscal-range"></div>
               </div>
             </div>
 
             <div id="top-ticker-row">
-              <span class="stat-label">Most Traded Ticker</span>
+              <span class="stat-label" data-i18n="analytics.most_traded_ticker">Most Traded Ticker</span>
               <span id="stat-top-ticker" class="top-ticker-value">—</span>
             </div>
 
             <div class="chart-card" id="chart-card-growth">
               <div class="chart-header">
-                <div class="chart-title">Cumulative Portfolio Growth</div>
+                <div class="chart-title" data-i18n="analytics.chart_growth_title">Cumulative Portfolio Growth</div>
                 <div class="chart-range-btns">
-                  <button class="range-btn" data-range="3m">3M</button>
-                  <button class="range-btn" data-range="6m">6M</button>
-                  <button class="range-btn" data-range="1y">1Y</button>
-                  <button class="range-btn" data-range="fy" title="This fiscal year">FY</button>
-                  <button class="range-btn active" data-range="all">All</button>
+                  <button class="range-btn" data-range="3m" data-i18n="analytics.range_3m">3M</button>
+                  <button class="range-btn" data-range="6m" data-i18n="analytics.range_6m">6M</button>
+                  <button class="range-btn" data-range="1y" data-i18n="analytics.range_1y">1Y</button>
+                  <button class="range-btn" data-range="fy" data-i18n="analytics.range_fy" data-i18n-title="analytics.range_fy_title" title="This fiscal year">FY</button>
+                  <button class="range-btn active" data-range="all" data-i18n="analytics.range_all">All</button>
                 </div>
               </div>
               <div class="chart-wrap"><canvas id="chart-growth"></canvas></div>
@@ -367,11 +383,11 @@
 
             <div id="charts-grid">
               <div class="chart-card" id="chart-card-bar">
-                <div class="chart-title">Monthly Volume (Last 12 Months)</div>
+                <div class="chart-title" data-i18n="analytics.chart_monthly_title">Monthly Volume (Last 12 Months)</div>
                 <div class="chart-wrap"><canvas id="chart-monthly"></canvas></div>
               </div>
               <div class="chart-card" id="chart-card-doughnut">
-                <div class="chart-title">Volume by Trade Type</div>
+                <div class="chart-title" data-i18n="analytics.chart_breakdown_title">Volume by Trade Type</div>
                 <div class="chart-wrap"><canvas id="chart-by-type"></canvas></div>
               </div>
             </div>
@@ -380,146 +396,54 @@
       </div>
       <!-- Settings panel -->
       <div id="settings-panel" class="hidden">
-        <div id="page-general" class="hidden">
-          <div class="page-header">
-            <h2 class="page-title">General</h2>
-          </div>
-
-          <div class="settings-form">
-            <div class="settings-field">
-              <label for="setting-display-name">Display name</label>
-              <div class="settings-control">
-                <input id="setting-display-name" type="text" data-key="display_name"
-                       placeholder="Your name" autocomplete="off" />
-                <span class="settings-status" data-status="display_name"></span>
-              </div>
-              <p class="settings-hint">Shown in the dashboard greeting.</p>
-            </div>
-
-            <div class="settings-field">
-              <label for="setting-currency">Currency</label>
-              <div class="settings-control">
-                <select id="setting-currency" data-key="currency">
-                  <option value="USD">USD ($)</option>
-                  <option value="EUR">EUR (€)</option>
-                  <option value="GBP">GBP (£)</option>
-                  <option value="CAD">CAD (C$)</option>
-                  <option value="AUD">AUD (A$)</option>
-                  <option value="JPY">JPY (¥)</option>
-                  <option value="CHF">CHF (Fr)</option>
-                </select>
-                <span class="settings-status" data-status="currency"></span>
-              </div>
-            </div>
-
-            <div class="settings-field">
-              <label for="setting-date-format">Date format</label>
-              <div class="settings-control">
-                <select id="setting-date-format" data-key="date_format">
-                  <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-                  <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-                  <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-                </select>
-                <span class="settings-preview" id="date-format-preview"></span>
-                <span class="settings-status" data-status="date_format"></span>
-              </div>
-            </div>
-
-            <div class="settings-field">
-              <label for="setting-decimal-separator">Decimal separator</label>
-              <div class="settings-control">
-                <select id="setting-decimal-separator" data-key="decimal_separator">
-                  <option value=".">Period (1,234.56)</option>
-                  <option value=",">Comma (1.234,56)</option>
-                </select>
-                <span class="settings-status" data-status="decimal_separator"></span>
-              </div>
-            </div>
-
-            <div class="settings-field">
-              <label for="setting-refresh-interval">Price refresh interval</label>
-              <div class="settings-control">
-                <select id="setting-refresh-interval" data-key="price_refresh_interval_minutes">
-                  <option value="5">Every 5 min</option>
-                  <option value="15">Every 15 min</option>
-                  <option value="30">Every 30 min</option>
-                  <option value="60">Every 60 min</option>
-                </select>
-                <span class="settings-status" data-status="price_refresh_interval_minutes"></span>
-              </div>
-            </div>
-
-            <div class="settings-field">
-              <label for="setting-fiscal-month">Fiscal year start</label>
-              <div class="settings-control">
-                <select id="setting-fiscal-month" data-key="fiscal_year_start_month">
-                  <option value="1">January</option>
-                  <option value="2">February</option>
-                  <option value="3">March</option>
-                  <option value="4">April</option>
-                  <option value="5">May</option>
-                  <option value="6">June</option>
-                  <option value="7">July</option>
-                  <option value="8">August</option>
-                  <option value="9">September</option>
-                  <option value="10">October</option>
-                  <option value="11">November</option>
-                  <option value="12">December</option>
-                </select>
-                <span class="settings-status" data-status="fiscal_year_start_month"></span>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <div id="page-brokers" class="hidden">
           <div class="page-header">
-            <h2 class="page-title">Brokers</h2>
-            <button id="btn-add-broker"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Add Broker</button>
+            <h2 class="page-title" data-i18n="settings.brokers">Brokers</h2>
+            <button id="btn-add-broker"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg><span data-i18n="settings.add_broker">Add Broker</span></button>
           </div>
 
           <div id="broker-form-wrap" class="hidden">
-            <div class="broker-form-title" id="broker-form-title">Add Broker</div>
+            <div class="broker-form-title" id="broker-form-title" data-i18n="settings.add_broker">Add Broker</div>
             <form id="broker-form">
               <div class="field-group">
                 <div class="field">
-                  <label for="broker-name-input">Name</label>
-                  <input id="broker-name-input" type="text" placeholder="e.g. Fidelity" autocomplete="off" />
+                  <label for="broker-name-input" data-i18n="settings.broker_name">Name</label>
+                  <input id="broker-name-input" type="text" data-i18n-placeholder="settings.broker_name_placeholder" placeholder="e.g. Fidelity" autocomplete="off" />
                 </div>
                 <div class="field">
-                  <label for="broker-source-input">Price Source</label>
+                  <label for="broker-source-input" data-i18n="settings.broker_price_source">Price Source</label>
                   <select id="broker-source-input">
                     <option value="yahoo_finance">Yahoo Finance</option>
                   </select>
                 </div>
                 <div class="field broker-color-field">
-                  <label>Color</label>
+                  <label data-i18n="settings.broker_color">Color</label>
                   <div class="color-picker-row">
-                    <button type="button" id="broker-color-swatch" class="color-swatch-btn" title="Open color picker"></button>
+                    <button type="button" id="broker-color-swatch" class="color-swatch-btn" data-i18n-title="settings.broker_color_swatch_title" title="Open color picker"></button>
                     <input type="color" id="broker-color-native" tabindex="-1" />
-                    <input type="text" id="broker-color-hex" placeholder="#rrggbb" maxlength="7" autocomplete="off" spellcheck="false" />
-                    <button type="button" id="broker-color-clear" class="color-clear-btn icon-btn" title="Remove color" aria-label="Remove color"><svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+                    <input type="text" id="broker-color-hex" data-i18n-placeholder="settings.broker_color_hex_placeholder" placeholder="#rrggbb" maxlength="7" autocomplete="off" spellcheck="false" />
+                    <button type="button" id="broker-color-clear" class="color-clear-btn icon-btn" data-i18n-title="settings.broker_color_clear_title" title="Remove color" aria-label="Remove color"><svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
                   </div>
                 </div>
               </div>
               <div class="field-group">
                 <div class="field">
-                  <label for="broker-commission-flat-input">Flat fee per trade ($)</label>
+                  <label for="broker-commission-flat-input" data-i18n="settings.broker_flat_fee">Flat fee per trade ($)</label>
                   <input id="broker-commission-flat-input" type="number" min="0" step="0.01" placeholder="0.00" autocomplete="off" />
                 </div>
                 <div class="field">
-                  <label for="broker-commission-per-unit-input">Per share/contract fee ($)</label>
+                  <label for="broker-commission-per-unit-input" data-i18n="settings.broker_per_unit_fee">Per share/contract fee ($)</label>
                   <input id="broker-commission-per-unit-input" type="number" min="0" step="0.01" placeholder="0.00" autocomplete="off" />
                 </div>
               </div>
               <div class="field">
-                <label for="broker-notes-input">Notes</label>
-                <textarea id="broker-notes-input" rows="2" placeholder="Optional description…"></textarea>
+                <label for="broker-notes-input" data-i18n="settings.broker_notes">Notes</label>
+                <textarea id="broker-notes-input" rows="2" data-i18n-placeholder="settings.broker_notes_placeholder" placeholder="Optional description…"></textarea>
               </div>
               <div id="broker-form-error" class="inline-error hidden"></div>
               <div class="form-row">
-                <button type="submit" id="btn-save-broker">Save Broker</button>
-                <button type="button" id="btn-cancel-broker" class="secondary">Cancel</button>
+                <button type="submit" id="btn-save-broker" data-i18n="settings.save_broker">Save Broker</button>
+                <button type="button" id="btn-cancel-broker" class="secondary" data-i18n="common.cancel">Cancel</button>
               </div>
             </form>
           </div>
@@ -530,29 +454,30 @@
           <table id="brokers-table" class="hidden">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Price Source</th>
-                <th>Notes</th>
+                <th data-i18n="settings.broker_col_name">Name</th>
+                <th data-i18n="settings.broker_col_source">Price Source</th>
+                <th data-i18n="settings.broker_col_notes">Notes</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="brokers-tbody"></tbody>
           </table>
-          <p id="brokers-empty" class="placeholder hidden">No brokers configured yet.</p>
+          <p id="brokers-empty" class="placeholder hidden" data-i18n="settings.brokers_empty">No brokers configured yet.</p>
         </div>
 
         <div id="page-trade-types" class="hidden">
           <div class="page-header">
-            <h2 class="page-title">Trade Types</h2>
-            <button id="btn-add-trade-type"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Add type</button>
+            <h2 class="page-title" data-i18n="settings.trade_types">Trade Types</h2>
+            <button id="btn-add-trade-type"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg><span data-i18n="settings.add_type">Add type</span></button>
           </div>
 
           <div id="trade-type-form-wrap" class="hidden">
             <form id="trade-type-form" class="inline-type-form">
-              <input id="trade-type-name-input" type="text" placeholder="e.g. Bond"
+              <input id="trade-type-name-input" type="text" data-i18n-placeholder="settings.type_name_placeholder" placeholder="e.g. Bond"
                      autocomplete="off" maxlength="50" />
-              <button type="submit" id="btn-save-trade-type">Save</button>
-              <button type="button" id="btn-cancel-trade-type" class="secondary">Cancel</button>
+              <span id="trade-type-color-slot"></span>
+              <button type="submit" id="btn-save-trade-type" data-i18n="common.save">Save</button>
+              <button type="button" id="btn-cancel-trade-type" class="secondary" data-i18n="common.cancel">Cancel</button>
             </form>
             <div id="trade-type-form-error" class="inline-error hidden"></div>
           </div>
@@ -562,45 +487,45 @@
           <table id="trade-types-table" class="hidden">
             <thead>
               <tr>
-                <th>Name</th>
-                <th class="num">Usage</th>
-                <th>Type</th>
+                <th data-i18n="settings.type_col_name">Name</th>
+                <th class="num" data-i18n="settings.type_col_usage">Usage</th>
+                <th data-i18n="settings.type_col_type">Type</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="trade-types-tbody"></tbody>
           </table>
-          <p id="trade-types-empty" class="placeholder hidden">No trade types yet.</p>
+          <p id="trade-types-empty" class="placeholder hidden" data-i18n="settings.trade_types_empty">No trade types yet.</p>
         </div>
 
         <div id="page-data" class="hidden">
           <div class="page-header">
-            <h2 class="page-title">Data</h2>
+            <h2 class="page-title" data-i18n="settings.data">Data</h2>
           </div>
 
           <section class="data-section">
-            <h3 class="data-section-title">Backup</h3>
-            <button id="btn-download-backup">Download backup</button>
-            <p class="data-note">Downloads the full database file. Store it somewhere safe.</p>
+            <h3 class="data-section-title" data-i18n="settings.backup">Backup</h3>
+            <button id="btn-download-backup" data-i18n="settings.download_backup">Download backup</button>
+            <p class="data-note" data-i18n="settings.backup_note">Downloads the full database file. Store it somewhere safe.</p>
           </section>
 
           <section class="data-section">
-            <h3 class="data-section-title">Restore</h3>
+            <h3 class="data-section-title" data-i18n="settings.restore">Restore</h3>
             <div class="data-restore-row">
               <input type="file" id="restore-file-input" accept=".db" />
-              <button id="btn-restore-backup" class="secondary">Restore from backup</button>
+              <button id="btn-restore-backup" class="secondary" data-i18n="settings.restore_backup">Restore from backup</button>
             </div>
-            <p class="data-note data-note-warning"><svg class="icon icon-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Restoring will overwrite your current data. This cannot be undone (except by restoring another backup).</p>
+            <p class="data-note data-note-warning"><svg class="icon icon-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span data-i18n="settings.restore_warning">Restoring will overwrite your current data. This cannot be undone (except by restoring another backup).</span></p>
             <div id="restore-result" class="hidden"></div>
           </section>
 
           <section class="data-section">
-            <h3 class="data-section-title">Price cache</h3>
+            <h3 class="data-section-title" data-i18n="settings.price_cache">Price cache</h3>
             <div class="data-restore-row">
               <span id="price-cache-count" class="price-cache-count">—</span>
-              <button id="btn-clear-cache" class="secondary">Clear cache</button>
+              <button id="btn-clear-cache" class="secondary" data-i18n="settings.clear_cache">Clear cache</button>
             </div>
-            <p class="data-note">Prices will be re-fetched from Yahoo Finance on next load. Use this if prices look stale or incorrect.</p>
+            <p class="data-note" data-i18n="settings.cache_note">Prices will be re-fetched from Yahoo Finance on next load. Use this if prices look stale or incorrect.</p>
             <div id="cache-result" class="hidden"></div>
           </section>
         </div>
@@ -614,68 +539,68 @@
     <div id="edit-trade-modal">
       <div class="sell-modal-header">
         <div class="sell-modal-title">
-          <span id="edit-trade-title">Edit Trade</span>
+          <span id="edit-trade-title" data-i18n="trades.edit_modal_title">Edit Trade</span>
         </div>
-        <button class="modal-close-btn" id="edit-trade-close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+        <button class="modal-close-btn" id="edit-trade-close" data-i18n-title="common.close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
       </div>
       <div class="edit-trade-body">
         <form id="edit-trade-form">
           <div class="field-group">
             <div class="field">
-              <label for="edit-ticker">Ticker</label>
+              <label for="edit-ticker" data-i18n="trades.columns.ticker">Ticker</label>
               <input id="edit-ticker" type="text" autocomplete="off" />
             </div>
             <div class="field">
-              <label for="edit-type">Type</label>
+              <label for="edit-type" data-i18n="trade_form.trade_type">Type</label>
               <select id="edit-type"></select>
             </div>
             <div class="field">
-              <label for="edit-action">Action</label>
+              <label for="edit-action" data-i18n="trade_form.action">Action</label>
               <select id="edit-action">
-                <option value="buy">Buy</option>
-                <option value="sell">Sell</option>
+                <option value="buy" data-i18n="trades.actions.buy">Buy</option>
+                <option value="sell" data-i18n="trades.actions.sell">Sell</option>
               </select>
             </div>
           </div>
           <div class="field-group">
             <div class="field">
-              <label for="edit-quantity">Quantity</label>
+              <label for="edit-quantity" data-i18n="trade_form.quantity">Quantity</label>
               <input id="edit-quantity" type="number" min="0.0001" step="any" />
             </div>
             <div class="field">
-              <label for="edit-price">Price per unit ($)</label>
+              <label for="edit-price" data-i18n="trade_form.price_per_unit">Price per unit ($)</label>
               <input id="edit-price" type="number" min="0" step="any" />
             </div>
             <div class="field">
-              <label for="edit-date">Trade date</label>
+              <label for="edit-date" data-i18n="trade_form.trade_date">Trade date</label>
               <input id="edit-date" type="date" />
             </div>
             <div class="field">
-              <label for="edit-broker">Broker</label>
+              <label for="edit-broker" data-i18n="trade_form.broker">Broker</label>
               <select id="edit-broker">
-                <option value="">— None —</option>
+                <option value="" data-i18n="common.none">— None —</option>
               </select>
             </div>
           </div>
           <div class="field commission-field">
             <div class="commission-label-row">
-              <label for="edit-commission">Estimated commission</label>
+              <label for="edit-commission" data-i18n="trade_form.estimated_commission">Estimated commission</label>
               <label class="override-toggle">
                 <input type="checkbox" id="edit-commission-override" />
-                <span>Override</span>
+                <span data-i18n="trade_form.commission_override">Override</span>
               </label>
             </div>
             <input id="edit-commission" type="number" min="0" step="0.01" value="0" readonly />
             <span class="commission-formula" id="edit-commission-formula"></span>
           </div>
           <div class="field">
-            <label for="edit-notes">Notes</label>
-            <textarea id="edit-notes" rows="2" placeholder="Optional notes…"></textarea>
+            <label for="edit-notes" data-i18n="trade_form.notes">Notes</label>
+            <textarea id="edit-notes" rows="2" data-i18n-placeholder="common.optional_notes" placeholder="Optional notes…"></textarea>
           </div>
           <div id="edit-trade-error" class="inline-error hidden"></div>
           <div class="form-row">
-            <button type="submit" id="btn-save-edit-trade">Save Changes</button>
-            <button type="button" id="btn-cancel-edit-trade" class="secondary">Cancel</button>
+            <button type="submit" id="btn-save-edit-trade" data-i18n="common.save_changes">Save Changes</button>
+            <button type="button" id="btn-cancel-edit-trade" class="secondary" data-i18n="common.cancel">Cancel</button>
           </div>
         </form>
       </div>
@@ -690,17 +615,17 @@
           <span id="sell-modal-ticker"></span>
           <span id="sell-modal-type-badge" class="badge"></span>
         </div>
-        <button class="modal-close-btn" id="sell-modal-close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+        <button class="modal-close-btn" id="sell-modal-close" data-i18n-title="common.close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
       </div>
 
       <div class="sell-modal-section">
-        <div class="sell-section-label">Open lots (FIFO order)</div>
+        <div class="sell-section-label" data-i18n="sell_form.open_lots">Open lots (FIFO order)</div>
         <table class="sell-lots-table">
           <thead>
             <tr>
-              <th>Date</th>
-              <th class="num">Remaining</th>
-              <th class="num">Price Paid</th>
+              <th data-i18n="trades.columns.date">Date</th>
+              <th class="num" data-i18n="sell_form.col_remaining">Remaining</th>
+              <th class="num" data-i18n="sell_form.col_price_paid">Price Paid</th>
             </tr>
           </thead>
           <tbody id="sell-lots-tbody"></tbody>
@@ -710,32 +635,32 @@
       <div class="sell-modal-section sell-form-section">
         <div class="field-group">
           <div class="field">
-            <label for="sell-qty-input">Quantity to Sell</label>
+            <label for="sell-qty-input" data-i18n="sell_form.quantity_sold">Quantity to Sell</label>
             <input id="sell-qty-input" type="number" min="0.0001" step="any" placeholder="0" />
             <span class="sell-max-hint" id="sell-max-hint"></span>
           </div>
           <div class="field">
-            <label for="sell-price-input">Sell Price / Unit ($)</label>
+            <label for="sell-price-input" data-i18n="sell_form.sell_price">Sell Price / Unit ($)</label>
             <input id="sell-price-input" type="number" min="0" step="any" placeholder="0.00" />
             <span class="sell-current-price" id="sell-current-price"></span>
           </div>
           <div class="field">
-            <label for="sell-date-input">Sell Date</label>
+            <label for="sell-date-input" data-i18n="sell_form.sell_date">Sell Date</label>
             <input id="sell-date-input" type="date" />
           </div>
         </div>
 
         <div class="field">
-          <label for="sell-notes-input">Notes</label>
-          <textarea id="sell-notes-input" rows="2" placeholder="Optional notes…"></textarea>
+          <label for="sell-notes-input" data-i18n="sell_form.notes">Notes</label>
+          <textarea id="sell-notes-input" rows="2" data-i18n-placeholder="common.optional_notes" placeholder="Optional notes…"></textarea>
         </div>
 
         <div id="sell-preview-bar" class="sell-preview-bar hidden"></div>
         <div id="sell-error" class="inline-error hidden"></div>
 
         <div class="form-row">
-          <button id="sell-confirm-btn">Confirm Sale</button>
-          <button id="sell-cancel-btn" class="secondary">Cancel</button>
+          <button id="sell-confirm-btn" data-i18n="sell_form.confirm">Confirm Sale</button>
+          <button id="sell-cancel-btn" class="secondary" data-i18n="sell_form.cancel">Cancel</button>
         </div>
       </div>
     </div>
@@ -746,8 +671,8 @@
     <div id="modal">
       <p id="modal-message"></p>
       <div class="form-row modal-actions">
-        <button id="modal-confirm" class="danger-solid">Delete</button>
-        <button id="modal-cancel" class="secondary">Cancel</button>
+        <button id="modal-confirm" class="danger-solid" data-i18n="common.delete">Delete</button>
+        <button id="modal-cancel" class="secondary" data-i18n="common.cancel">Cancel</button>
       </div>
     </div>
   </div>
@@ -756,38 +681,136 @@
   <div id="search-all-overlay" class="hidden">
     <div id="search-all-modal">
       <div class="settings-header">
-        <span class="settings-title" id="search-all-title">Search results</span>
-        <button class="modal-close-btn" id="search-all-close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+        <span class="settings-title" id="search-all-title" data-i18n="search.all_title">Search results</span>
+        <button class="modal-close-btn" id="search-all-close" data-i18n-title="common.close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
       </div>
       <div class="settings-body">
         <div id="search-all-spinner" class="spinner-wrap hidden"><div class="spinner"></div></div>
         <div id="search-all-error" class="inline-error hidden"></div>
         <div id="search-all-list"></div>
-        <p id="search-all-empty" class="placeholder hidden">No results.</p>
+        <p id="search-all-empty" class="placeholder hidden" data-i18n="search.all_empty">No results.</p>
         <div id="search-all-loadmore" class="list-loadmore hidden"></div>
       </div>
     </div>
   </div>
 
-  <!-- Settings modal -->
+  <!-- Settings popup (general app settings + appearance) -->
   <div id="settings-overlay" class="hidden">
     <div id="settings-modal">
       <div class="settings-header">
-        <span class="settings-title">Settings</span>
-        <button class="modal-close-btn" id="settings-close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+        <span class="settings-title" data-i18n="settings.title">Settings</span>
+        <button class="modal-close-btn" id="settings-close" data-i18n-title="common.close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
       </div>
-      <div class="settings-body">
+      <div class="settings-body" id="settings-body">
+
+        <div class="settings-field">
+          <label for="setting-display-name" data-i18n="settings.display_name">Display name</label>
+          <div class="settings-control">
+            <input id="setting-display-name" type="text" data-key="display_name"
+                   data-i18n-placeholder="settings.display_name_placeholder" placeholder="Your name" autocomplete="off" />
+            <span class="settings-status" data-status="display_name"></span>
+          </div>
+          <p class="settings-hint" data-i18n="settings.display_name_hint">Shown in the dashboard greeting.</p>
+        </div>
+
+        <div class="settings-field">
+          <label for="setting-language" data-i18n="settings.language">Language</label>
+          <div class="settings-control">
+            <select id="setting-language">
+              <option value="en" data-i18n="settings.language_en">🇬🇧 English</option>
+              <option value="de" data-i18n="settings.language_de">🇩🇪 Deutsch</option>
+            </select>
+            <span class="settings-status" data-status="language"></span>
+          </div>
+        </div>
+
+        <div class="settings-field">
+          <label for="setting-currency" data-i18n="settings.currency">Currency</label>
+          <div class="settings-control">
+            <select id="setting-currency" data-key="currency">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr)</option>
+            </select>
+            <span class="settings-status" data-status="currency"></span>
+          </div>
+        </div>
+
+        <div class="settings-field">
+          <label for="setting-date-format" data-i18n="settings.date_format">Date format</label>
+          <div class="settings-control">
+            <select id="setting-date-format" data-key="date_format">
+              <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+              <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+              <option value="DD.MM.YYYY">DD.MM.YYYY</option>
+              <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+            </select>
+            <span class="settings-preview" id="date-format-preview"></span>
+            <span class="settings-status" data-status="date_format"></span>
+          </div>
+        </div>
+
+        <div class="settings-field">
+          <label for="setting-decimal-separator" data-i18n="settings.decimal_separator">Decimal separator</label>
+          <div class="settings-control">
+            <select id="setting-decimal-separator" data-key="decimal_separator">
+              <option value="." data-i18n="settings.decimal_period">Period (1,234.56)</option>
+              <option value="," data-i18n="settings.decimal_comma">Comma (1.234,56)</option>
+            </select>
+            <span class="settings-status" data-status="decimal_separator"></span>
+          </div>
+        </div>
+
+        <div class="settings-field">
+          <label for="setting-refresh-interval" data-i18n="settings.price_refresh">Price refresh interval</label>
+          <div class="settings-control">
+            <select id="setting-refresh-interval" data-key="price_refresh_interval_minutes">
+              <option value="5" data-i18n="settings.refresh_5">Every 5 min</option>
+              <option value="15" data-i18n="settings.refresh_15">Every 15 min</option>
+              <option value="30" data-i18n="settings.refresh_30">Every 30 min</option>
+              <option value="60" data-i18n="settings.refresh_60">Every 60 min</option>
+            </select>
+            <span class="settings-status" data-status="price_refresh_interval_minutes"></span>
+          </div>
+        </div>
+
+        <div class="settings-field">
+          <label for="setting-fiscal-month" data-i18n="settings.fiscal_year_start">Fiscal year start</label>
+          <div class="settings-control">
+            <select id="setting-fiscal-month" data-key="fiscal_year_start_month">
+              <option value="1"  data-i18n="settings.months.1">January</option>
+              <option value="2"  data-i18n="settings.months.2">February</option>
+              <option value="3"  data-i18n="settings.months.3">March</option>
+              <option value="4"  data-i18n="settings.months.4">April</option>
+              <option value="5"  data-i18n="settings.months.5">May</option>
+              <option value="6"  data-i18n="settings.months.6">June</option>
+              <option value="7"  data-i18n="settings.months.7">July</option>
+              <option value="8"  data-i18n="settings.months.8">August</option>
+              <option value="9"  data-i18n="settings.months.9">September</option>
+              <option value="10" data-i18n="settings.months.10">October</option>
+              <option value="11" data-i18n="settings.months.11">November</option>
+              <option value="12" data-i18n="settings.months.12">December</option>
+            </select>
+            <span class="settings-status" data-status="fiscal_year_start_month"></span>
+          </div>
+        </div>
+
+        <h3 class="data-section-title settings-section-divider" data-i18n="settings.appearance">Appearance</h3>
 
         <div class="settings-group">
-          <div class="settings-label">Theme</div>
+          <div class="settings-label" data-i18n="preferences.theme">Theme</div>
           <div class="settings-options" id="setting-theme">
-            <button class="opt-btn active" data-value="dark">Dark</button>
-            <button class="opt-btn" data-value="light">Light</button>
+            <button class="opt-btn active" data-value="dark" data-i18n="preferences.theme_dark">Dark</button>
+            <button class="opt-btn" data-value="light" data-i18n="preferences.theme_light">Light</button>
           </div>
         </div>
 
         <div class="settings-group">
-          <div class="settings-label">UI Scale</div>
+          <div class="settings-label" data-i18n="preferences.ui_scale">UI Scale</div>
           <div class="settings-scale-row">
             <span class="scale-bound">80%</span>
             <input type="range" id="setting-zoom" min="0.8" max="3.0" step="0.05" value="1.0" />
@@ -797,19 +820,19 @@
         </div>
 
         <div class="settings-group">
-          <div class="settings-label">Sidebar Width</div>
+          <div class="settings-label" data-i18n="preferences.sidebar_width">Sidebar Width</div>
           <div class="settings-options" id="setting-sidebar">
-            <button class="opt-btn" data-value="180">Narrow</button>
-            <button class="opt-btn active" data-value="240">Normal</button>
-            <button class="opt-btn" data-value="300">Wide</button>
+            <button class="opt-btn" data-value="180" data-i18n="preferences.sidebar_narrow">Narrow</button>
+            <button class="opt-btn active" data-value="240" data-i18n="preferences.sidebar_normal">Normal</button>
+            <button class="opt-btn" data-value="300" data-i18n="preferences.sidebar_wide">Wide</button>
           </div>
         </div>
 
         <div class="settings-group">
-          <div class="settings-label">Table Density</div>
+          <div class="settings-label" data-i18n="preferences.table_density">Table Density</div>
           <div class="settings-options" id="setting-density">
-            <button class="opt-btn active" data-value="normal">Normal</button>
-            <button class="opt-btn" data-value="compact">Compact</button>
+            <button class="opt-btn active" data-value="normal" data-i18n="preferences.density_normal">Normal</button>
+            <button class="opt-btn" data-value="compact" data-i18n="preferences.density_compact">Compact</button>
           </div>
         </div>
 
@@ -821,28 +844,29 @@
   <div id="shortcuts-cheatsheet" class="hidden">
     <div id="shortcuts-panel">
       <div class="settings-header">
-        <span class="settings-title">Keyboard Shortcuts</span>
-        <button class="modal-close-btn" id="shortcuts-close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+        <span class="settings-title" data-i18n="shortcuts.title">Keyboard Shortcuts</span>
+        <button class="modal-close-btn" id="shortcuts-close" data-i18n-title="common.close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
       </div>
       <div class="shortcuts-body">
-        <kbd class="key-badge">/</kbd><span>Focus the search bar</span>
-        <kbd class="key-badge">N</kbd><span>Open Add Trade and focus the ticker field</span>
-        <kbd class="key-badge">S</kbd><span>Switch to Positions (sell flow)</span>
-        <kbd class="key-badge">?</kbd><span>Toggle this shortcuts cheatsheet</span>
-        <kbd class="key-badge">Esc</kbd><span>Close this cheatsheet</span>
+        <kbd class="key-badge">/</kbd><span data-i18n="shortcuts.focus_search">Focus the search bar</span>
+        <kbd class="key-badge">N</kbd><span data-i18n="shortcuts.open_add_trade">Open Add Trade and focus the ticker field</span>
+        <kbd class="key-badge">S</kbd><span data-i18n="shortcuts.switch_positions">Switch to Positions (sell flow)</span>
+        <kbd class="key-badge">?</kbd><span data-i18n="shortcuts.toggle">Toggle this shortcuts cheatsheet</span>
+        <kbd class="key-badge">Esc</kbd><span data-i18n="shortcuts.close">Close this cheatsheet</span>
       </div>
-      <div class="shortcuts-footer">Shortcuts are disabled while typing in a field</div>
+      <div class="shortcuts-footer" data-i18n="shortcuts.footer">Shortcuts are disabled while typing in a field</div>
     </div>
   </div>
 
   <!-- Floating help button (discoverable shortcuts) -->
-  <button id="shortcuts-fab" title="Keyboard shortcuts (?)">?</button>
+  <button id="shortcuts-fab" data-i18n-title="shortcuts.fab_title" title="Keyboard shortcuts (?)">?</button>
 
   <div id="toast" class="hidden"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
   <script src="static/js/formatting.js"></script>
+  <script src="i18n.js"></script>
   <script src="static/js/app.js"></script>
 </body>
 </html>

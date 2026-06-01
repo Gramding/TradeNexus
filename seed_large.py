@@ -44,7 +44,7 @@ def _apply_fast_pragmas(conn):
     conn.execute("PRAGMA cache_size = -200000")   # ~200 MB page cache
 
 
-def seed_user_bulk(conn, name, email, persona, broker_cfg, n_trades, id_state):
+def seed_user_bulk(conn, name, email, persona, broker_cfg, instrument_ids, n_trades, id_state):
     """Insert one user with n_trades buys (+ sell lots + cash) using bulk inserts.
 
     id_state carries running 'trade' and 'sell' id counters so explicit ids stay
@@ -85,8 +85,8 @@ def seed_user_bulk(conn, name, email, persona, broker_cfg, n_trades, id_state):
             note = None
 
         trade_rows.append((
-            tid, user_id, broker_id, ticker, ttype, "buy", qty, price, total,
-            date.isoformat(), note, "open", qty, commission, net_total,
+            tid, user_id, broker_id, instrument_ids.get(ticker), ticker, ttype, "buy",
+            qty, price, total, date.isoformat(), note, "open", qty, commission, net_total,
         ))
         trade_meta.append((tid, ttype, price, qty, total, commission, date, broker_id))
         cash_rows.append((user_id, "buy_deduction", -total, tid, None, S._dt(date, "10:00:00")))
@@ -96,9 +96,10 @@ def seed_user_bulk(conn, name, email, persona, broker_cfg, n_trades, id_state):
 
     cur.executemany(
         "INSERT INTO trades "
-        "(id, user_id, broker_id, ticker, trade_type, action, quantity, price_per_unit, "
-        "total_value, trade_date, notes, status, remaining_quantity, commission, net_total_value) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(id, user_id, broker_id, instrument_id, ticker, trade_type, action, quantity, "
+        "price_per_unit, total_value, trade_date, notes, status, remaining_quantity, "
+        "commission, net_total_value) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         trade_rows,
     )
 
@@ -184,6 +185,8 @@ def main() -> None:
 
     broker_cfg = S.seed_brokers(conn)
     print(f"  Seeded {len(broker_cfg)} brokers")
+    instrument_ids = S.seed_instruments(conn)
+    print(f"  Seeded {len(instrument_ids)} instruments")
     print(f"  Target: {n_users} user(s) x {per_user:,} trades each\n")
 
     personas = list(S.PERSONAS)
@@ -201,7 +204,7 @@ def main() -> None:
 
         u0 = time.monotonic()
         print(f"  User {i:>2}/{n_users}: {name:<22} ({persona:<12}) ...", end="", flush=True)
-        nt, ns, nc = seed_user_bulk(conn, name, email, persona, broker_cfg, per_user, id_state)
+        nt, ns, nc = seed_user_bulk(conn, name, email, persona, broker_cfg, instrument_ids, per_user, id_state)
         total_trades += nt
         total_sells += ns
         total_cash += nc

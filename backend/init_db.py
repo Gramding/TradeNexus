@@ -13,20 +13,35 @@ SEED_USER = ("TradeNexus User", "user@tradenexus.local")
 SEED_SETTINGS = [
     ("display_name", "Trader"),
     ("currency", "USD"),
+    ("language", "en"),
     ("date_format", "MM/DD/YYYY"),
+    ("date_format_manual_override", "0"),
     ("decimal_separator", "."),
     ("price_refresh_interval_minutes", "15"),
     ("default_broker_id", ""),
     ("fiscal_year_start_month", "1"),
 ]
 
-# Default trade types (name, is_default). is_default=1 marks app-seeded rows.
-SEED_TRADE_TYPES = [
-    ("Stock", 1),
-    ("Call", 1),
-    ("Put", 1),
-    ("Other", 1),
-]
+# Default chart/badge colors for the seeded trade types. Users can override any of
+# these from the Trade Types settings page (stored in trade_types.color).
+DEFAULT_TYPE_COLORS = {
+    "Stock":   "#4f8ef7",
+    "ETF":     "#a259ff",
+    "Crypto":  "#ffaa33",
+    "Forex":   "#4caf82",
+    "Futures": "#e6c84f",
+    "Call":    "#2bb6c4",
+    "Put":     "#e05c5c",
+    "Other":   "#7b8099",
+}
+
+# Default trade types (name, is_default, color). is_default=1 marks app-seeded rows.
+# The asset-class-aligned names (ETF/Crypto/Forex/Futures) let an instrument's
+# asset_class auto-fill the trade type by name. Call/Put/Other remain for options
+# and unlisted free-text entries that have no asset class.
+SEED_TRADE_TYPES = [(name, 1, DEFAULT_TYPE_COLORS[name]) for name in (
+    "Stock", "ETF", "Crypto", "Forex", "Futures", "Call", "Put", "Other",
+)]
 
 # trades schema WITHOUT the legacy trade_type CHECK constraint. Used to rebuild an
 # older trades table so capitalized trade_type values are accepted (the constraint
@@ -72,7 +87,9 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_sell_lots_sell_date ON sell_lots(sell_date DESC)",
     "CREATE INDEX IF NOT EXISTS idx_cash_pool_user_id ON cash_pool(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_cash_pool_user_date ON cash_pool(user_id, created_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_price_cache_ticker_source ON price_cache(ticker, source)",
+    "CREATE INDEX IF NOT EXISTS idx_price_cache_symbol_source ON price_cache(symbol, source)",
+    "CREATE INDEX IF NOT EXISTS idx_instruments_symbol ON instruments(symbol)",
+    "CREATE INDEX IF NOT EXISTS idx_instruments_ticker ON instruments(ticker)",
 ]
 
 
@@ -89,15 +106,20 @@ def create_indexes(conn):
 
 
 def seed_trade_types(conn):
-    """Insert the default trade types if the table is empty."""
+    """Ensure every default trade type exists. Idempotent (INSERT OR IGNORE on the
+    unique name), so existing databases pick up newly added defaults — e.g. the
+    asset-class types — on the next startup. Default types can't be deleted (the
+    route layer blocks it), so re-inserting a missing one never fights the user."""
     cur = conn.cursor()
-    if cur.execute("SELECT COUNT(*) FROM trade_types").fetchone()[0] == 0:
-        cur.executemany(
-            "INSERT INTO trade_types (name, is_default) VALUES (?, ?)",
-            SEED_TRADE_TYPES,
-        )
-        conn.commit()
-        print(f"Seeded {len(SEED_TRADE_TYPES)} default trade types")
+    before = cur.execute("SELECT COUNT(*) FROM trade_types").fetchone()[0]
+    cur.executemany(
+        "INSERT OR IGNORE INTO trade_types (name, is_default, color) VALUES (?, ?, ?)",
+        SEED_TRADE_TYPES,
+    )
+    conn.commit()
+    added = cur.execute("SELECT COUNT(*) FROM trade_types").fetchone()[0] - before
+    if added:
+        print(f"Seeded {added} default trade type(s)")
 
 
 def _rebuild_trades_without_check(conn):
@@ -133,6 +155,78 @@ def _rebuild_trades_without_check(conn):
         print("Migration: rebuilt trades table to drop the trade_type CHECK constraint")
     finally:
         conn.isolation_level = prev_iso
+
+
+def _migrate_instruments(conn):
+    """Add trades.instrument_id and best-effort back-fill the instruments table.
+
+    For each distinct ticker on existing trades we create a minimal instrument
+    (symbol = ticker = UPPER(ticker), asset_class = 'stock' as a safe default),
+    then link every unlinked trade to it. Existing data is never modified beyond
+    populating instrument_id, so this is safe to run on a populated database.
+    """
+    cur = conn.cursor()
+
+    cur.execute("PRAGMA table_info(trades)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "instrument_id" not in columns:
+        cur.execute("ALTER TABLE trades ADD COLUMN instrument_id INTEGER REFERENCES instruments(id)")
+        print("Migration: added trades.instrument_id")
+
+    # Create one instrument per distinct ticker. INSERT OR IGNORE skips tickers
+    # already present (instruments.symbol is UNIQUE), so this is idempotent.
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO instruments (symbol, ticker, asset_class)
+        SELECT DISTINCT UPPER(ticker), UPPER(ticker), 'stock'
+        FROM trades
+        WHERE ticker IS NOT NULL AND TRIM(ticker) != ''
+        """
+    )
+    if cur.rowcount > 0:
+        print(f"Migration: created {cur.rowcount} instrument(s) from existing tickers")
+
+    # Link trades to their instrument by matching the ticker. Only fill rows that
+    # are not already linked so a re-run never disturbs explicit assignments.
+    cur.execute(
+        """
+        UPDATE trades
+        SET instrument_id = (SELECT id FROM instruments WHERE symbol = UPPER(trades.ticker))
+        WHERE instrument_id IS NULL
+        """
+    )
+    if cur.rowcount > 0:
+        print(f"Migration: linked {cur.rowcount} trade(s) to instruments")
+
+    conn.commit()
+
+
+def _migrate_price_cache_symbol(conn):
+    """Rename price_cache.ticker -> symbol and re-key existing rows to the Yahoo
+    symbol. Runs after _migrate_instruments so the instruments table is populated.
+
+    No-op once the column is already named symbol (fresh schema or prior run).
+    """
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(price_cache)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "symbol" in cols or "ticker" not in cols:
+        return  # already migrated or fresh schema
+
+    # Re-key cached rows from the display ticker to the matching instrument's Yahoo
+    # symbol. UPDATE OR IGNORE skips any row whose target (symbol, source) already
+    # exists — price_cache is a regenerable cache, so dropping a duplicate is fine.
+    cur.execute(
+        "UPDATE OR IGNORE price_cache "
+        "SET ticker = (SELECT i.symbol FROM instruments i WHERE UPPER(i.ticker) = price_cache.ticker) "
+        "WHERE EXISTS (SELECT 1 FROM instruments i WHERE UPPER(i.ticker) = price_cache.ticker)"
+    )
+    # Drop the old column-named index before the rename, then let create_indexes()
+    # rebuild it under the new column name.
+    cur.execute("DROP INDEX IF EXISTS idx_price_cache_ticker_source")
+    cur.execute("ALTER TABLE price_cache RENAME COLUMN ticker TO symbol")
+    conn.commit()
+    print("Migration: renamed price_cache.ticker -> symbol and re-keyed to instrument symbols")
 
 
 def _migrate(conn):
@@ -191,11 +285,32 @@ def _migrate(conn):
         )
         print("Migration: added trades.net_total_value and back-filled from total_value")
 
+    # trade_types.color (per-type chart/badge color). Back-fill the default types
+    # with their standard colors so existing databases get sensible chart colors;
+    # user-created types stay uncolored until set from the settings page.
+    cur.execute("PRAGMA table_info(trade_types)")
+    tt_cols = {row[1] for row in cur.fetchall()}
+    if "color" not in tt_cols:
+        cur.execute("ALTER TABLE trade_types ADD COLUMN color TEXT")
+        for nm, col in DEFAULT_TYPE_COLORS.items():
+            cur.execute(
+                "UPDATE trade_types SET color = ? WHERE name = ? AND color IS NULL",
+                (col, nm),
+            )
+        print("Migration: added trade_types.color (+ default colors)")
+
     conn.commit()
 
     # Drop the legacy trade_type CHECK so capitalized values are accepted. Runs
     # after the additive migrations above so the rebuilt table has every column.
     _rebuild_trades_without_check(conn)
+
+    # Add + back-fill instrument_id last: the rebuild above copies a fixed column
+    # list, so running this afterward guarantees the column survives the rebuild.
+    _migrate_instruments(conn)
+
+    # Re-key price_cache to instrument symbols (needs instruments populated above).
+    _migrate_price_cache_symbol(conn)
 
 
 def _bootstrap(conn, *, seed_demo_user: bool):

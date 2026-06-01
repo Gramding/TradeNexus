@@ -413,14 +413,16 @@ tr.row-flash > td { animation: rowFlash 1.5s ease-out; }
 }
 
 /* ── Trade filters ────────────────────────────────────────────────────────── */
-#trade-filters {
+#trade-filters,
+#position-filters {
   display: flex;
   gap: 8px;
   align-items: center;
   margin-bottom: 16px;
   flex-wrap: wrap;
 }
-#filter-ticker { width: 120px; }
+#filter-ticker,
+#pos-filter-ticker { width: 120px; }
 
 /* Trade-date range filter: inline labels + auto-width native date inputs. */
 .date-filter { display: flex; align-items: center; gap: 6px; }
@@ -488,8 +490,135 @@ tr.row-flash > td { animation: rowFlash 1.5s ease-out; }
 .badge-call  { background: rgba(162,89,255,0.15); color: #a259ff; }
 .badge-put   { background: rgba(255,165,0,0.15);  color: #ffaa33; }
 .badge-other { background: rgba(123,128,153,0.2); color: var(--text-muted); }
+/* Asset-class-aligned trade types share the asset-class palette so the Type
+   column reads the same as the instrument: etf=purple, crypto=orange, etc. */
+.badge-etf     { background: rgba(162,89,255,0.15); color: #a259ff; }
+.badge-crypto  { background: rgba(255,165,0,0.15);  color: #ffaa33; }
+.badge-forex   { background: rgba(76,175,130,0.15); color: var(--green); }
+.badge-futures { background: rgba(230,200,60,0.18); color: #e6c84f; }
 .badge-default-type { background: rgba(79,142,247,0.12); color: var(--accent); }
 .badge-custom-type  { background: rgba(123,128,153,0.2); color: var(--text-muted); }
+
+/* Asset-class badges, colored by type: stock=blue, etf=purple, crypto=orange,
+   forex=green, futures=yellow. */
+.badge-asset-stock   { background: rgba(79,142,247,0.12); color: var(--accent); }
+.badge-asset-etf     { background: rgba(162,89,255,0.15); color: #a259ff; }
+.badge-asset-crypto  { background: rgba(255,165,0,0.15);  color: #ffaa33; }
+.badge-asset-forex   { background: rgba(76,175,130,0.15); color: var(--green); }
+.badge-asset-futures { background: rgba(230,200,60,0.18); color: #e6c84f; }
+.badge-asset-option  { background: rgba(162,89,255,0.15); color: #a259ff; }
+.badge-asset-other   { background: rgba(123,128,153,0.2); color: var(--text-muted); }
+
+/* Small monospace-ish exchange tag shown beside a ticker, e.g. [NASDAQ] AAPL. */
+.exchange-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  background: var(--surface2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.ticker-cell { white-space: nowrap; }
+.ticker-cell strong { vertical-align: middle; margin: 0 4px; }
+
+/* ── Instrument search combobox (Add Trade form) ──────────────────────────── */
+.instrument-field { position: relative; }
+
+.combobox { position: relative; }
+
+#trade-instrument.has-selection {
+  font-weight: 600;
+  cursor: default;
+  background: var(--surface2);
+}
+
+.combobox-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.combobox-banner {
+  padding: 7px 12px;
+  font-size: 12px;
+  color: #ffaa33;
+  background: rgba(255,165,0,0.10);
+  border-bottom: 1px solid var(--border);
+}
+
+.combobox-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.combobox-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.combobox-row:hover { background: var(--surface2); }
+.combobox-row .cb-symbol { font-weight: 600; color: var(--text); }
+.combobox-row .cb-name {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Confirmation chip below the input after a pick. */
+.instrument-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 99px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text);
+}
+.instrument-chip .chip-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.instrument-chip .chip-clear:hover { background: var(--border); color: var(--text); }
+.instrument-chip .chip-clear .icon { width: 13px; height: 13px; }
+
+.field-hint {
+  margin: 5px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
 
 .notes-cell {
   max-width: 180px;
@@ -1065,7 +1194,11 @@ html[data-theme="light"] select option { background: var(--surface); color: var(
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  width: 360px;
+  width: 440px;
+  max-width: 92vw;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
 }
 
@@ -1075,6 +1208,7 @@ html[data-theme="light"] select option { background: var(--surface); color: var(
   justify-content: space-between;
   padding: 14px 18px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .settings-title { font-weight: 700; font-size: 15px; }
@@ -1084,7 +1218,12 @@ html[data-theme="light"] select option { background: var(--surface); color: var(
   display: flex;
   flex-direction: column;
   gap: 18px;
+  overflow-y: auto;   /* the combined settings list can exceed the viewport */
 }
+
+/* The app-setting fields use .settings-field (with its own bottom margin on the
+   General page); inside the popup the flex gap handles spacing instead. */
+#settings-modal .settings-field { margin-bottom: 0; }
 
 .settings-group { display: flex; flex-direction: column; gap: 7px; }
 
@@ -1473,7 +1612,8 @@ button.edit-btn:hover { color: var(--accent); background: rgba(79,142,247,0.1); 
 .color-swatch-btn:hover { box-shadow: 0 0 0 2px var(--accent); }
 
 /* Native color input is invisible — triggered programmatically */
-#broker-color-native {
+#broker-color-native,
+.color-native-hidden {
   position: absolute;
   width: 0;
   height: 0;
@@ -1482,6 +1622,10 @@ button.edit-btn:hover { color: var(--accent); background: rgba(79,142,247,0.1); 
   padding: 0;
   pointer-events: none;
 }
+
+/* Inline trade-type color picker (in the create form + edit row). */
+.type-color-picker { display: inline-flex; gap: 6px; }
+.type-color-picker .color-swatch-btn { width: 28px; height: 28px; }
 
 #broker-color-hex {
   width: auto;
@@ -1709,4 +1853,12 @@ button.icon-btn.danger  .icon { display: block; }
   transform: translateY(-50%);
   color: var(--text-muted);
   pointer-events: none;
+}
+
+/* Section divider inside the General settings form (separates the appearance
+   controls that were moved out of the old preferences modal). */
+.settings-section-divider {
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
 }

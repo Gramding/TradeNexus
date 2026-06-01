@@ -57,6 +57,31 @@ OPTIONS = {
     "MSFT": (220.0, 420.0),
 }
 
+# ── Instrument reference data ───────────────────────────────────────────────────
+
+# One row per distinct ticker used above (STOCKS ∪ ETFS; OPTIONS reuse those
+# underlyings). Columns: symbol, ticker, name, exchange, asset_class, currency, isin.
+# These tickers are all US-listed, so symbol == ticker and currency is USD.
+INSTRUMENTS = [
+    ("AAPL",  "AAPL",  "Apple Inc.",                        "NASDAQ", "stock", "USD", "US0378331005"),
+    ("MSFT",  "MSFT",  "Microsoft Corporation",             "NASDAQ", "stock", "USD", "US5949181045"),
+    ("GOOGL", "GOOGL", "Alphabet Inc. Class A",             "NASDAQ", "stock", "USD", "US02079K3059"),
+    ("NVDA",  "NVDA",  "NVIDIA Corporation",                "NASDAQ", "stock", "USD", "US67066G1040"),
+    ("AMZN",  "AMZN",  "Amazon.com, Inc.",                  "NASDAQ", "stock", "USD", "US0231351067"),
+    ("TSLA",  "TSLA",  "Tesla, Inc.",                       "NASDAQ", "stock", "USD", "US88160R1014"),
+    ("META",  "META",  "Meta Platforms, Inc.",              "NASDAQ", "stock", "USD", "US30303M1027"),
+    ("JPM",   "JPM",   "JPMorgan Chase & Co.",              "NYSE",   "stock", "USD", "US46625H1005"),
+    ("BAC",   "BAC",   "Bank of America Corporation",       "NYSE",   "stock", "USD", "US0605051046"),
+    ("V",     "V",     "Visa Inc.",                         "NYSE",   "stock", "USD", "US92826C8394"),
+    ("AMD",   "AMD",   "Advanced Micro Devices, Inc.",      "NASDAQ", "stock", "USD", "US0079031078"),
+    ("NFLX",  "NFLX",  "Netflix, Inc.",                     "NASDAQ", "stock", "USD", "US64110L1061"),
+    ("SPY",   "SPY",   "SPDR S&P 500 ETF Trust",            "NYSE",   "etf",   "USD", "US78462F1030"),
+    ("QQQ",   "QQQ",   "Invesco QQQ Trust",                 "NASDAQ", "etf",   "USD", "US46090E1038"),
+    ("IWM",   "IWM",   "iShares Russell 2000 ETF",          "NYSE",   "etf",   "USD", "US4642876555"),
+    ("VTI",   "VTI",   "Vanguard Total Stock Market ETF",   "NYSE",   "etf",   "USD", "US9229087690"),
+    ("XLF",   "XLF",   "Financial Select Sector SPDR Fund", "NYSE",   "etf",   "USD", "US81369Y6059"),
+]
+
 # ── Persona definitions ───────────────────────────────────────────────────────
 
 PERSONAS = {
@@ -225,6 +250,7 @@ def reset_schema(conn) -> None:
         DROP TABLE IF EXISTS sell_lots;
         DROP TABLE IF EXISTS cash_pool;
         DROP TABLE IF EXISTS trades;
+        DROP TABLE IF EXISTS instruments;
         DROP TABLE IF EXISTS brokers;
         DROP TABLE IF EXISTS users;
         PRAGMA foreign_keys = ON;
@@ -250,9 +276,27 @@ def seed_brokers(conn) -> dict[int, dict]:
     return cfg_by_id
 
 
+# ── Instrument seed ───────────────────────────────────────────────────────────
+
+def seed_instruments(conn) -> dict[str, int]:
+    """Insert the reference instruments; return a map of ticker -> instrument_id."""
+    cur = conn.cursor()
+    id_by_ticker: dict[str, int] = {}
+    for symbol, ticker, name, exchange, asset_class, currency, isin in INSTRUMENTS:
+        cur.execute(
+            "INSERT INTO instruments (symbol, ticker, name, exchange, asset_class, currency, isin) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (symbol, ticker, name, exchange, asset_class, currency, isin),
+        )
+        id_by_ticker[ticker] = cur.lastrowid
+    conn.commit()
+    return id_by_ticker
+
+
 # ── Per-user seed ─────────────────────────────────────────────────────────────
 
-def seed_user(conn, name: str, email: str, persona: str, broker_cfg: dict[int, dict]) -> tuple[int, int, int]:
+def seed_user(conn, name: str, email: str, persona: str, broker_cfg: dict[int, dict],
+              instrument_ids: dict[str, int]) -> tuple[int, int, int]:
     """Insert one user with all their trades, sell lots, and cash pool rows.
 
     Returns (n_trades, n_sell_lots, n_cash_transactions).
@@ -297,15 +341,15 @@ def seed_user(conn, name: str, email: str, persona: str, broker_cfg: dict[int, d
         cur.execute(
             """
             INSERT INTO trades
-                (user_id, broker_id, ticker, trade_type, action, quantity, price_per_unit,
-                 total_value, trade_date, notes, status, remaining_quantity,
+                (user_id, broker_id, instrument_id, ticker, trade_type, action, quantity,
+                 price_per_unit, total_value, trade_date, notes, status, remaining_quantity,
                  commission, net_total_value)
-            VALUES (?, ?, ?, ?, 'buy', ?, ?, ?, ?, ?, 'open', ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, 'buy', ?, ?, ?, ?, ?, 'open', ?, ?, ?)
             """,
             (
-                user_id, t["broker_id"], t["ticker"], t["type"], t["qty"], t["price"],
-                t["total"], t["date"].isoformat(), t["note"], t["qty"],
-                commission, net_total,
+                user_id, t["broker_id"], instrument_ids.get(t["ticker"]), t["ticker"],
+                t["type"], t["qty"], t["price"], t["total"], t["date"].isoformat(),
+                t["note"], t["qty"], commission, net_total,
             ),
         )
         trade_ids.append(cur.lastrowid)
@@ -447,6 +491,9 @@ def main() -> None:
 
     broker_cfg = seed_brokers(conn)
     print(f"  Seeded {len(broker_cfg)} brokers: {', '.join(b['name'] for b in BROKERS)}")
+
+    instrument_ids = seed_instruments(conn)
+    print(f"  Seeded {len(instrument_ids)} instruments")
     print()
 
     total_trades = total_sells = total_cash = 0
@@ -454,7 +501,7 @@ def main() -> None:
     for i, (name, email, persona) in enumerate(USERS, 1):
         label = f"{name} ({persona})"
         print(f"  Seeding user {i:>2}/{len(USERS)}: {label:<35}", end="", flush=True)
-        n_trades, n_sells, n_cash = seed_user(conn, name, email, persona, broker_cfg)
+        n_trades, n_sells, n_cash = seed_user(conn, name, email, persona, broker_cfg, instrument_ids)
         print(f"  {n_trades:>3} trades   {n_sells:>2} sells")
         total_trades += n_trades
         total_sells += n_sells
@@ -466,6 +513,7 @@ def main() -> None:
     print("═" * 52)
     print("  Seed complete!")
     print(f"  Brokers:             {len(broker_cfg)}")
+    print(f"  Instruments:         {len(instrument_ids)}")
     print(f"  Users:               {len(USERS)}")
     print(f"  Trades:              {total_trades}")
     print(f"  Sell lots:           {total_sells}")

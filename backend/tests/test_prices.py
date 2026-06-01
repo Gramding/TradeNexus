@@ -5,16 +5,16 @@ import datetime
 import db
 
 
-def _seed_cache(ticker, price, hours_old=0, source="yahoo_finance"):
+def _seed_cache(symbol, price, hours_old=0, source="yahoo_finance"):
     now = datetime.datetime.now(datetime.timezone.utc)
     ts = (now - datetime.timedelta(hours=hours_old)).strftime("%Y-%m-%d %H:%M:%S")
     conn = db.get_connection()
     try:
         conn.execute(
-            "INSERT INTO price_cache (ticker, price, currency, fetched_at, source) "
+            "INSERT INTO price_cache (symbol, price, currency, fetched_at, source) "
             "VALUES (?, ?, 'USD', ?, ?) "
-            "ON CONFLICT(ticker, source) DO UPDATE SET price=excluded.price, fetched_at=excluded.fetched_at",
-            (ticker.upper(), price, ts, source),
+            "ON CONFLICT(symbol, source) DO UPDATE SET price=excluded.price, fetched_at=excluded.fetched_at",
+            (symbol.upper(), price, ts, source),
         )
         conn.commit()
     finally:

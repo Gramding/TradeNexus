@@ -1,5 +1,7 @@
 import logging
+import re
 import sqlite3
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -10,6 +12,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["trade-types"])
 
 MAX_NAME_LEN = 50
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 # ---------------------------------------------------------------------------
@@ -25,12 +28,13 @@ def _db() -> sqlite3.Connection:
 
 
 def _row_to_type(r) -> dict:
-    return {"id": r[0], "name": r[1], "is_default": int(r[2]), "usage_count": int(r[3])}
+    return {"id": r[0], "name": r[1], "is_default": int(r[2]), "color": r[3],
+            "usage_count": int(r[4])}
 
 
 # A single row joined with its usage count (number of trades using its name).
 _SELECT = (
-    "SELECT tt.id, tt.name, tt.is_default, "
+    "SELECT tt.id, tt.name, tt.is_default, tt.color, "
     "(SELECT COUNT(*) FROM trades WHERE trades.trade_type = tt.name) AS usage_count "
     "FROM trade_types tt"
 )
@@ -46,6 +50,18 @@ def _require_type(cur: sqlite3.Cursor, type_id: int):
     if row is None:
         raise HTTPException(status_code=404, detail=f"Trade type {type_id} not found.")
     return row
+
+
+def _validate_color(value) -> Optional[str]:
+    """Normalize an optional '#rrggbb' color; None/empty means 'no color'."""
+    if value is None:
+        return None
+    v = str(value).strip()
+    if v == "":
+        return None
+    if not _HEX_RE.match(v):
+        raise HTTPException(status_code=422, detail="color must be a '#rrggbb' hex value.")
+    return v.lower()
 
 
 def _validate_name(name: str) -> str:
@@ -74,6 +90,7 @@ def _name_taken(cur: sqlite3.Cursor, name: str, exclude_id=None) -> bool:
 
 class TradeTypeBody(BaseModel):
     name: str
+    color: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -98,14 +115,15 @@ def list_trade_types():
 @router.post("/trade-types", status_code=201)
 def create_trade_type(body: TradeTypeBody):
     name = _validate_name(body.name)
+    color = _validate_color(body.color)
     conn = _db()
     try:
         cur = conn.cursor()
         if _name_taken(cur, name):
             raise HTTPException(status_code=409, detail="A trade type with that name already exists.")
         cur.execute(
-            "INSERT INTO trade_types (name, is_default) VALUES (?, 0)",
-            (name,),
+            "INSERT INTO trade_types (name, is_default, color) VALUES (?, 0, ?)",
+            (name, color),
         )
         conn.commit()
         row = _fetch_one(cur, cur.lastrowid)
@@ -126,6 +144,7 @@ def create_trade_type(body: TradeTypeBody):
 @router.put("/trade-types/{type_id}")
 def update_trade_type(type_id: int, body: TradeTypeBody):
     name = _validate_name(body.name)
+    color = _validate_color(body.color)
     conn = _db()
     try:
         cur = conn.cursor()
@@ -135,8 +154,9 @@ def update_trade_type(type_id: int, body: TradeTypeBody):
         if _name_taken(cur, name, exclude_id=type_id):
             raise HTTPException(status_code=409, detail="A trade type with that name already exists.")
 
-        # Single transaction: rename the type and re-point every trade that used it.
-        cur.execute("UPDATE trade_types SET name = ? WHERE id = ?", (name, type_id))
+        # Single transaction: rename the type (re-pointing every trade that used it)
+        # and store its color.
+        cur.execute("UPDATE trade_types SET name = ?, color = ? WHERE id = ?", (name, color, type_id))
         cur.execute("UPDATE trades SET trade_type = ? WHERE trade_type = ?", (name, old_name))
         trades_updated = cur.rowcount
         conn.commit()
@@ -165,7 +185,7 @@ def delete_trade_type(type_id: int):
     try:
         cur = conn.cursor()
         row = _require_type(cur, type_id)
-        is_default, usage_count = int(row[2]), int(row[3])
+        is_default, usage_count = int(row[2]), int(row[4])
 
         if is_default == 1:
             raise HTTPException(status_code=400, detail="Default trade types cannot be deleted.")

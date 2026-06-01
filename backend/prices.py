@@ -28,7 +28,7 @@ def _db() -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 
 class PriceRefreshBody(BaseModel):
-    tickers: list[str]
+    symbols: list[str]
     source: str = "yahoo_finance"
 
 
@@ -36,12 +36,15 @@ class PriceRefreshBody(BaseModel):
 # Routes
 # ---------------------------------------------------------------------------
 
-@router.get("/prices/{ticker}")
+@router.get("/prices/{symbol}")
 def get_price(
-    ticker: str,
+    symbol: str,
     source: str = Query(default="yahoo_finance"),
     cache_only: bool = Query(default=False),
 ):
+    """Fetch a price by Yahoo Finance *symbol* (e.g. "VOD.L", "BTC-USD"), not by a
+    raw display ticker. The Add-trade autofill passes the selected instrument's
+    symbol; the cache is keyed by symbol too."""
     try:
         get_price_source(source)  # validate before touching the DB
     except ValueError as exc:
@@ -52,9 +55,9 @@ def get_price(
         # cache_only: return the cached value regardless of age and never fetch
         # live (used by the passive Add-trade autofill).
         if cache_only:
-            result = get_cached_price(conn, ticker, source)
+            result = get_cached_price(conn, symbol, source)
         else:
-            result = get_or_fetch_price(conn, ticker, source)
+            result = get_or_fetch_price(conn, symbol, source)
     except sqlite3.Error as exc:
         logger.error("get_price DB error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to fetch price.")
@@ -64,16 +67,16 @@ def get_price(
     if result is None:
         raise HTTPException(
             status_code=404,
-            detail=f"No price available for '{ticker.upper()}' from source '{source}'.",
+            detail=f"No price available for '{symbol.upper()}' from source '{source}'.",
         )
     return result
 
 
 @router.post("/prices/refresh")
 def refresh_prices(body: PriceRefreshBody):
-    tickers = [t.strip() for t in body.tickers if t.strip()]
-    if not tickers:
-        raise HTTPException(status_code=422, detail="tickers list cannot be empty.")
+    symbols = [s.strip() for s in body.symbols if s.strip()]
+    if not symbols:
+        raise HTTPException(status_code=422, detail="symbols list cannot be empty.")
 
     try:
         get_price_source(body.source)  # validate before opening DB
@@ -83,18 +86,18 @@ def refresh_prices(body: PriceRefreshBody):
     conn = _db()
     results = []
     try:
-        for ticker in tickers:
+        for symbol in symbols:
             try:
-                result = get_or_fetch_price(conn, ticker, body.source, max_age_minutes=0)
+                result = get_or_fetch_price(conn, symbol, body.source, max_age_minutes=0)
             except Exception as exc:
-                logger.warning("refresh_prices: failed for %s: %s", ticker, exc)
+                logger.warning("refresh_prices: failed for %s: %s", symbol, exc)
                 result = None
 
             if result is not None:
                 results.append(result)
             else:
                 results.append({
-                    "ticker":      ticker.upper(),
+                    "symbol":      symbol.upper(),
                     "price":       None,
                     "currency":    None,
                     "source":      body.source,
@@ -126,10 +129,14 @@ def get_positions_with_prices(
         if cur.fetchone() is None:
             raise HTTPException(status_code=404, detail=f"User {user_id} not found.")
 
+        # JOIN instruments so each position carries its Yahoo symbol; prices are
+        # fetched by symbol while the display ticker is shown to the user.
         cur.execute(
             "SELECT t.id, t.ticker, t.trade_type, t.trade_date, t.remaining_quantity, "
-            "t.price_per_unit, t.status, t.broker_id, b.color, t.quantity, t.commission "
+            "t.price_per_unit, t.status, t.broker_id, b.color, t.quantity, t.commission, "
+            "i.symbol, i.name, i.exchange, i.asset_class "
             "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
+            "LEFT JOIN instruments i ON t.instrument_id = i.id "
             "WHERE t.user_id = ? AND t.action = 'buy' AND t.status IN ('open', 'partial') "
             "ORDER BY t.ticker, t.trade_type, t.trade_date, t.id",
             (user_id,),
@@ -139,19 +146,30 @@ def get_positions_with_prices(
         # Group lots into positions, same logic as GET /users/{id}/positions
         groups: dict[tuple, dict] = {}
         for (trade_id, ticker, trade_type, trade_date, remaining_qty, price_per_unit,
-             status, broker_id, broker_color, orig_quantity, buy_commission) in rows:
+             status, broker_id, broker_color, orig_quantity, buy_commission,
+             instr_symbol, instr_name, instr_exchange, instr_asset_class) in rows:
             remaining_qty  = float(remaining_qty)
             price_per_unit = float(price_per_unit)
             key = (ticker, trade_type)
             if key not in groups:
                 groups[key] = {
                     "ticker":                   ticker,
+                    "symbol":                   instr_symbol,  # first non-null wins below
+                    "name":                     instr_name,
+                    "exchange":                 instr_exchange,
+                    "asset_class":              instr_asset_class,
                     "trade_type":               trade_type,
                     "total_remaining_quantity": 0.0,
                     "total_cost_basis":         0.0,
                     "lots":                     [],
                     "broker_qty":               {},  # broker_id -> {color, qty}
                 }
+            # Keep the first instrument fields seen for this ticker group.
+            if groups[key]["symbol"] is None and instr_symbol is not None:
+                groups[key]["symbol"]      = instr_symbol
+                groups[key]["name"]        = instr_name
+                groups[key]["exchange"]    = instr_exchange
+                groups[key]["asset_class"] = instr_asset_class
             g = groups[key]
             g["total_remaining_quantity"] += remaining_qty
             g["total_cost_basis"]         += remaining_qty * price_per_unit
@@ -182,10 +200,13 @@ def get_positions_with_prices(
             dominant = max(g["broker_qty"].values(), key=lambda x: x["qty"]) if g["broker_qty"] else None
             broker_color = dominant["color"] if dominant else None
 
+            # Fetch by Yahoo symbol; fall back to the display ticker for positions
+            # whose trades aren't linked to an instrument yet.
+            fetch_symbol = g["symbol"] or g["ticker"]
             try:
-                price_data = get_or_fetch_price(conn, g["ticker"], source)
+                price_data = get_or_fetch_price(conn, fetch_symbol, source)
             except Exception as exc:
-                logger.warning("positions/prices: price fetch failed for %s: %s", g["ticker"], exc)
+                logger.warning("positions/prices: price fetch failed for %s: %s", fetch_symbol, exc)
                 price_data = None
 
             current_price = price_data["price"] if price_data else None
@@ -202,6 +223,10 @@ def get_positions_with_prices(
 
             positions.append({
                 "ticker":                   g["ticker"],
+                "symbol":                   g["symbol"] or g["ticker"],
+                "name":                     g["name"],
+                "exchange":                 g["exchange"],
+                "asset_class":              g["asset_class"],
                 "trade_type":               g["trade_type"],
                 "total_remaining_quantity": total_qty,
                 "avg_cost_per_unit":        avg_cost,

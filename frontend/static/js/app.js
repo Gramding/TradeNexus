@@ -58,10 +58,10 @@ function renderListFooter(el, state) {
   if (state.hasMore) {
     const btn = document.createElement('button');
     btn.className = 'secondary load-more-btn';
-    btn.textContent = `Load ${state.pageSize} more`;
+    btn.textContent = i18n.t('common.load_more', { n: state.pageSize });
     btn.addEventListener('click', () => {
       btn.disabled = true;
-      btn.innerHTML = `<span class="mini-spinner"></span> Loading…`;
+      btn.innerHTML = `<span class="mini-spinner"></span> ${escHtml(i18n.t('common.loading'))}`;
       Promise.resolve(state.onMore()).catch(() => {});
     });
     el.appendChild(btn);
@@ -69,12 +69,15 @@ function renderListFooter(el, state) {
     return;
   }
   if (!state.loaded) { el.classList.add('hidden'); return; }
-  el.innerHTML = `<div class="list-notice">All ${fmtCount(state.total)} ${state.nounP} loaded</div>`;
+  el.innerHTML = `<div class="list-notice">${escHtml(i18n.t('common.all_loaded', { n: fmtCount(state.total), noun: state.nounP }))}</div>`;
   el.classList.remove('hidden');
 }
 
 const addTradeForm      = document.getElementById('add-trade-form');
-const tradeTicker       = document.getElementById('trade-ticker');
+const instrumentInput   = document.getElementById('trade-instrument');
+const instrumentIdField = document.getElementById('trade-instrument-id');
+const instrumentDropdown = document.getElementById('instrument-dropdown');
+const instrumentChip    = document.getElementById('instrument-chip');
 const tradeType         = document.getElementById('trade-type');
 const tradeAction       = document.getElementById('trade-action');
 const tradeQuantity     = document.getElementById('trade-quantity');
@@ -263,7 +266,7 @@ function renderUserList(users) {
   if (!users.length) {
     const li = document.createElement('li');
     li.className = 'empty-msg';
-    li.textContent = 'No users yet.';
+    li.textContent = i18n.t('app.no_users');
     userList.appendChild(li);
     return;
   }
@@ -311,15 +314,17 @@ function updateGreeting() {
   const el = document.getElementById('dashboard-greeting');
   if (!el) return;
   const hour = new Date().getHours();
-  const part = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const key = hour < 12 ? 'dashboard.greeting_morning'
+            : hour < 18 ? 'dashboard.greeting_afternoon'
+            : 'dashboard.greeting_evening';
   const name = (appSettings.display_name || 'Trader').trim() || 'Trader';
-  el.textContent = `${part}, ${name}`;
+  el.textContent = i18n.t(key, { name });
 }
 
 // ── Delete user ───────────────────────────────────────────────────────────────
 btnDeleteUser.addEventListener('click', async () => {
   const ok = await confirmDialog(
-    `Delete "${activeUserName}" and all their trades? This cannot be undone.`
+    i18n.t('app.delete_user_confirm', { name: activeUserName })
   );
   if (!ok) return;
 
@@ -329,7 +334,7 @@ btnDeleteUser.addEventListener('click', async () => {
     activeUserName = null;
     userPanel.classList.add('hidden');
     emptyState.classList.remove('hidden');
-    showToast('User deleted.');
+    showToast(i18n.t('app.user_deleted'));
     loadUsers();
   } catch (e) {
     showToast(e.message, true);
@@ -360,7 +365,7 @@ async function saveUser() {
   const email = newUserEmail.value.trim();
 
   if (!name || !email) {
-    showError(addUserError, 'Name and email are required.');
+    showError(addUserError, i18n.t('app.name_email_required'));
     return;
   }
 
@@ -369,7 +374,7 @@ async function saveUser() {
     await apiFetch('/users', { method: 'POST', body: JSON.stringify({ name, email }) });
     newUserName.value = newUserEmail.value = '';
     addUserForm.classList.add('hidden');
-    showToast('User created.');
+    showToast(i18n.t('app.user_created'));
     loadUsers();
   } catch (e) {
     showError(addUserError, e.message);
@@ -476,7 +481,7 @@ function loadMoreTrades() {
       }
       renderTradesRows(newRows, { append: true });
     })
-    .catch(e => showToast('Failed to load more: ' + e.message, true))
+    .catch(e => showToast(i18n.t('common.load_more_failed', { error: e.message }), true))
     .finally(() => {
       tradesLoading = false;
       updateTradesChrome();   // restores the button (or swaps to notice / all-loaded)
@@ -492,14 +497,14 @@ function updateTradesChrome() {
     return;
   }
   tradesCountHeader.classList.remove('hidden');
-  tradesCountText.textContent = `Showing ${fmtCount(loaded)} of ${fmtCount(tradesTotal)} trades`;
+  tradesCountText.textContent = i18n.t('trades.showing', { shown: fmtCount(loaded), total: fmtCount(tradesTotal) });
 
   const capped = loaded >= TRADES_DOM_CAP && (tradesHasMore || tradesTotal > loaded);
   renderListFooter(tradesLoadmore, {
     loaded, total: tradesTotal,
     hasMore: tradesHasMore && !capped,
-    capped, pageSize: TRADES_PAGE, nounP: 'trades',
-    capNotice: 'Showing 500 trades. Use filters to narrow results or export to CSV for the full list.',
+    capped, pageSize: TRADES_PAGE, nounP: i18n.t('common.nouns.trades'),
+    capNotice: i18n.t('trades.cap_notice'),
     onMore: loadMoreTrades,
   });
 }
@@ -575,9 +580,12 @@ function renderTradesRows(trades, { append }) {
     tr.dataset.tradeId = t.id;
     tr.innerHTML = `
       <td>${formatDate(t.trade_date)}</td>
-      <td><strong>${escHtml(t.ticker.toUpperCase())}</strong></td>
+      <td class="ticker-cell">
+        ${exchangeBadge(t.exchange)}
+        <strong${t.name ? ` title="${escHtml(t.name)}"` : ''}>${escHtml(t.ticker.toUpperCase())}</strong>
+      </td>
       <td>${badge(t.trade_type)}</td>
-      <td>${badge(t.action)}</td>
+      <td><span class="badge badge-${t.action}">${escHtml(i18n.t('trades.actions.' + t.action))}</span></td>
       <td class="num">${formatNumber(t.quantity)}</td>
       <td class="num">${formatCurrency(t.price_per_unit)}</td>
       <td class="num">${formatCurrency(t.total_value)}</td>
@@ -585,9 +593,9 @@ function renderTradesRows(trades, { append }) {
       <td class="num">${t.net_total_value != null ? formatCurrency(t.net_total_value) : '—'}</td>
       <td class="notes-cell" title="${escHtml(t.notes ?? '')}">${escHtml(t.notes ?? '—')}</td>
       <td>
-        <button class="icon-btn edit-btn" title="Edit trade" aria-label="Edit trade">${icon('edit')}</button>
-        <button class="icon-btn edit-btn dup-btn" title="Duplicate trade" aria-label="Duplicate trade">${icon('copy')}</button>
-        <button class="icon-btn danger" title="Delete trade" aria-label="Delete trade">${icon('trash')}</button>
+        <button class="icon-btn edit-btn" title="${escHtml(i18n.t('trades.edit_title'))}" aria-label="${escHtml(i18n.t('trades.edit_title'))}">${icon('edit')}</button>
+        <button class="icon-btn edit-btn dup-btn" title="${escHtml(i18n.t('trades.duplicate_title'))}" aria-label="${escHtml(i18n.t('trades.duplicate_title'))}">${icon('copy')}</button>
+        <button class="icon-btn danger" title="${escHtml(i18n.t('trades.delete_title'))}" aria-label="${escHtml(i18n.t('trades.delete_title'))}">${icon('trash')}</button>
       </td>
     `;
     if (t.broker_color) {
@@ -604,11 +612,11 @@ function renderTradesRows(trades, { append }) {
 }
 
 async function deleteTrade(id, ticker) {
-  const ok = await confirmDialog(`Delete the ${ticker} trade? This cannot be undone.`);
+  const ok = await confirmDialog(i18n.t('trades.delete_confirm', { ticker }));
   if (!ok) return;
   try {
     await apiFetch(`/trades/${id}`, { method: 'DELETE' });
-    showToast('Trade deleted.');
+    showToast(i18n.t('trades.deleted'));
     loadTrades();
   } catch (e) {
     showToast(e.message, true);
@@ -623,7 +631,10 @@ async function duplicateTrade(t) {
   switchTab('add-trade', { skipInit: true });
   await loadBrokerOptions(tradeBrokerEl);
 
-  tradeTicker.value   = (t.ticker || '').toUpperCase();
+  // Duplicate as a free-text ticker; the user can re-pick from search for a
+  // price lookup if they want to re-link an instrument.
+  clearInstrumentSelection();
+  instrumentInput.value = (t.ticker || '').toUpperCase();
   tradeType.value     = t.trade_type;
   tradeAction.value   = t.action;
   tradeQuantity.value = t.quantity;
@@ -673,7 +684,7 @@ document.getElementById('btn-export-csv').addEventListener('click', async () => 
     const res = await fetch(`${API}/users/${activeUserId}/trades/export`);
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      showToast(err.detail || 'Export failed.', true);
+      showToast(err.detail || i18n.t('trades.export_failed'), true);
       return;
     }
     const disposition = res.headers.get('Content-Disposition') ?? '';
@@ -688,7 +699,7 @@ document.getElementById('btn-export-csv').addEventListener('click', async () => 
     a.click();
     URL.revokeObjectURL(url);
   } catch (e) {
-    showToast('Export failed: ' + e.message, true);
+    showToast(i18n.t('trades.export_failed_detail', { error: e.message }), true);
   } finally {
     btn.disabled = false;
   }
@@ -704,8 +715,8 @@ tradeQuantity.addEventListener('input', updateTotalPreview);
 tradePrice.addEventListener('input', updateTotalPreview);
 
 // ── Passive price autofill ──────────────────────────────────────────────────────
-// On ticker blur, look up a cached price (regardless of age, no live fetch) and
-// pre-fill the price field if the user hasn't typed one. Fires once per ticker.
+// Look up a cached price (regardless of age, no live fetch) by Yahoo symbol and
+// pre-fill the price field if the user hasn't typed one. Fires once per symbol.
 const priceAutofillHint = document.getElementById('price-autofill-hint');
 let lastAutofillTicker = '';
 
@@ -728,18 +739,18 @@ function relativeAge(utcString) {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
-async function autofillPriceFromCache() {
-  const ticker = tradeTicker.value.trim().toUpperCase();
+async function autofillPriceFromCache(symbol) {
+  symbol = (symbol || '').trim().toUpperCase();
 
-  if (!ticker) { lastAutofillTicker = ''; return; }   // cleared → allow re-fire later
-  if (ticker === lastAutofillTicker) return;          // already handled this entry
-  lastAutofillTicker = ticker;
+  if (!symbol) { lastAutofillTicker = ''; return; }   // cleared → allow re-fire later
+  if (symbol === lastAutofillTicker) return;          // already handled this entry
+  lastAutofillTicker = symbol;
 
   // Never overwrite a price the user typed themselves.
   if (tradePrice.value.trim() !== '') return;
 
   try {
-    const data = await apiFetch(`/prices/${encodeURIComponent(ticker)}?cache_only=true`);
+    const data = await apiFetch(`/prices/${encodeURIComponent(symbol)}?cache_only=true`);
     if (!data || data.price == null) return;          // no cache → do nothing
     if (tradePrice.value.trim() !== '') return;       // user typed while we waited
 
@@ -755,9 +766,210 @@ async function autofillPriceFromCache() {
   }
 }
 
-tradeTicker.addEventListener('blur', autofillPriceFromCache);
 // Once the user edits the price, the "autofilled" note no longer applies.
 tradePrice.addEventListener('input', hidePriceAutofillHint);
+
+// ── Instrument search combobox ────────────────────────────────────────────────
+// The Instrument field is a combobox: typing searches GET /instruments/search and
+// shows a dropdown. Picking a result upserts it (POST /instruments), links it to
+// the trade via a hidden instrument_id, and locks the input. Typing without
+// picking falls back to a free-text ticker (no instrument_id) for unlisted names.
+let selectedInstrument = null;       // the picked instrument row, or null in free-text mode
+let instrumentSearchDebounce = null;
+let instrumentSearchSeq = 0;         // guards against out-of-order async responses
+
+// Title-case an asset_class for display: "stock" → "Stock", "etf" → "ETF".
+function assetClassLabel(ac) {
+  const s = String(ac || '').toLowerCase();
+  if (s === 'etf') return 'ETF';
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+
+function assetClassBadge(ac) {
+  if (!ac) return '';
+  return `<span class="badge badge-asset-${String(ac).toLowerCase()}">${escHtml(assetClassLabel(ac))}</span>`;
+}
+
+function exchangeBadge(exchange) {
+  if (!exchange) return '';
+  return `<span class="exchange-badge">${escHtml(exchange)}</span>`;
+}
+
+function hideInstrumentDropdown() {
+  instrumentDropdown.classList.add('hidden');
+  instrumentDropdown.innerHTML = '';
+  instrumentInput.setAttribute('aria-expanded', 'false');
+}
+
+function renderInstrumentDropdown(data) {
+  const results = (data && data.results) || [];
+  let html = '';
+
+  if (data && data.source === 'local_only' && data.warning) {
+    html += `<div class="combobox-banner">${escHtml(i18n.t('trade_form.search_cached_only'))}</div>`;
+  }
+
+  if (!results.length) {
+    html += `<div class="combobox-empty">${escHtml(i18n.t('trade_form.instrument_no_match'))}</div>`;
+  } else {
+    results.forEach((r, i) => {
+      const name = r.name || r.ticker || r.symbol;
+      html += `
+        <div class="combobox-row" role="option" data-idx="${i}">
+          ${exchangeBadge(r.exchange)}
+          <span class="cb-symbol">${escHtml(r.symbol)}</span>
+          <span class="cb-name">— ${escHtml(name)}</span>
+          ${assetClassBadge(r.asset_class)}
+        </div>`;
+    });
+  }
+
+  instrumentDropdown.innerHTML = html;
+  instrumentDropdown.classList.remove('hidden');
+  instrumentInput.setAttribute('aria-expanded', 'true');
+
+  // Select on mousedown (not click) + preventDefault so the input keeps focus and
+  // the blur-driven free-text fallback never fires for a deliberate pick.
+  instrumentDropdown.querySelectorAll('.combobox-row').forEach(row => {
+    row.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      selectInstrument(results[parseInt(row.dataset.idx, 10)]);
+    });
+  });
+}
+
+async function runInstrumentSearch(q) {
+  const seq = ++instrumentSearchSeq;
+  try {
+    const data = await apiFetch(`/instruments/search?q=${encodeURIComponent(q)}`);
+    if (seq !== instrumentSearchSeq) return;   // a newer query superseded this one
+    if (selectedInstrument) return;            // user already picked while waiting
+    renderInstrumentDropdown(data);
+  } catch (e) {
+    hideInstrumentDropdown();
+  }
+}
+
+async function selectInstrument(result) {
+  let inst = result;
+  // 1. Upsert the instrument locally so it has a stable id we can reference.
+  try {
+    inst = await apiFetch('/instruments', {
+      method: 'POST',
+      body: JSON.stringify({
+        symbol:      result.symbol,
+        ticker:      result.ticker,
+        name:        result.name ?? null,
+        exchange:    result.exchange ?? null,
+        asset_class: result.asset_class || 'stock',
+        currency:    result.currency || 'USD',
+        isin:        result.isin ?? null,
+      }),
+    });
+  } catch (e) {
+    showToast(i18n.t('trade_form.instrument_save_failed', { error: e.message }), true);
+    return;
+  }
+
+  selectedInstrument = inst;
+  // 2 + 3. Set the hidden id and lock the input to a friendly label.
+  instrumentIdField.value = inst.id;
+  instrumentInput.value = `${inst.ticker} — ${inst.name || inst.ticker}`;
+  instrumentInput.readOnly = true;
+  instrumentInput.classList.add('has-selection');
+  hideInstrumentDropdown();
+
+  // 4. Auto-fill the trade type from the asset class (stock→Stock, crypto→Crypto,
+  //    etf→ETF, …), creating the type if the user's list doesn't have it. It stays
+  //    editable so an option on this instrument can still be tagged Call/Put.
+  await ensureAndSelectTradeType(inst.asset_class);
+
+  // 5. Price autofill by the instrument's Yahoo symbol.
+  lastAutofillTicker = '';
+  autofillPriceFromCache(inst.symbol);
+
+  // 6. Confirmation chip.
+  renderInstrumentChip(inst);
+}
+
+// Select the trade type matching an asset class, creating it on the fly if the
+// user-fillable list doesn't have it yet (defaults are pre-seeded, so this is a
+// safety net for deleted/unknown classes). Reloads the list so the new type shows
+// in every dropdown.
+async function ensureAndSelectTradeType(assetClass) {
+  const ac = String(assetClass || '').toLowerCase();
+  if (!ac) return;
+
+  let match = tradeTypesList.find(t => t.name.toLowerCase() === ac);
+  if (!match) {
+    try {
+      await apiFetch('/trade-types', { method: 'POST', body: JSON.stringify({ name: assetClassLabel(ac) }) });
+    } catch (e) {
+      // 409 (already exists) or any failure: fall through and re-read the list.
+    }
+    await loadTradeTypes();   // refresh tradeTypesList + repopulate dropdowns
+    match = tradeTypesList.find(t => t.name.toLowerCase() === ac);
+  }
+  if (match) {
+    tradeType.value = match.name;
+    updateAddTradeCommission();
+  }
+}
+
+function renderInstrumentChip(inst) {
+  const parts = [inst.symbol];
+  if (inst.exchange) parts.push(`on ${inst.exchange}`);
+  let text = parts.join(' ');
+  const tail = [];
+  if (inst.currency) tail.push(inst.currency);
+  if (inst.isin) tail.push(`ISIN: ${inst.isin}`);
+  if (tail.length) text += ` · ${tail.join(' · ')}`;
+
+  instrumentChip.innerHTML =
+    `<span class="chip-text">${escHtml(text)}</span>` +
+    `<button type="button" class="chip-clear" aria-label="Clear instrument">${icon('close')}</button>`;
+  instrumentChip.classList.remove('hidden');
+  instrumentChip.querySelector('.chip-clear').addEventListener('click', () => clearInstrumentSelection({ focus: true }));
+}
+
+function clearInstrumentSelection({ focus = false } = {}) {
+  selectedInstrument = null;
+  instrumentIdField.value = '';
+  instrumentInput.readOnly = false;
+  instrumentInput.classList.remove('has-selection');
+  instrumentInput.value = '';
+  instrumentChip.classList.add('hidden');
+  instrumentChip.innerHTML = '';
+  hideInstrumentDropdown();
+  lastAutofillTicker = '';
+  if (focus) instrumentInput.focus();
+}
+
+instrumentInput.addEventListener('input', () => {
+  if (selectedInstrument) return;            // locked while a selection is active
+  clearTimeout(instrumentSearchDebounce);
+  const q = instrumentInput.value.trim();
+  if (q.length < 2) { hideInstrumentDropdown(); return; }
+  instrumentSearchDebounce = setTimeout(() => runInstrumentSearch(q), 400);
+});
+
+instrumentInput.addEventListener('blur', () => {
+  // Defer so a dropdown mousedown selection is processed before we hide it.
+  setTimeout(() => {
+    hideInstrumentDropdown();
+    // Free-text fallback: a typed-but-unpicked entry doubles as the ticker, and we
+    // still try a cached-price autofill keyed by that raw value (symbol == ticker).
+    if (!selectedInstrument) autofillPriceFromCache(instrumentInput.value);
+  }, 150);
+});
+
+// Escape closes the dropdown without committing anything.
+instrumentInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !instrumentDropdown.classList.contains('hidden')) {
+    e.preventDefault();
+    hideInstrumentDropdown();
+  }
+});
 
 // ── Add-trade commission ──────────────────────────────────────────────────────
 function updateAddTradeCommission() {
@@ -846,8 +1058,13 @@ addTradeForm.addEventListener('submit', async (e) => {
 
   clearError(addTradeError);
 
+  // Ticker comes from the picked instrument, or the raw free-text entry otherwise.
+  const ticker = selectedInstrument
+    ? selectedInstrument.ticker
+    : instrumentInput.value.trim();
+
   const payload = {
-    ticker:         tradeTicker.value.trim().toUpperCase(),
+    ticker:         ticker.toUpperCase(),
     trade_type:     tradeType.value,
     action:         tradeAction.value,
     quantity:       parseFloat(tradeQuantity.value),
@@ -855,6 +1072,7 @@ addTradeForm.addEventListener('submit', async (e) => {
     trade_date:     tradeDate.value,
     notes:          tradeNotes.value.trim() || null,
     broker_id:      tradeBrokerEl.value ? parseInt(tradeBrokerEl.value) : null,
+    instrument_id:  selectedInstrument ? selectedInstrument.id : null,
   };
   // Only send commission when the user has overridden it; otherwise the backend
   // auto-calculates from the broker.
@@ -868,7 +1086,7 @@ addTradeForm.addEventListener('submit', async (e) => {
       method: 'POST',
       body: JSON.stringify(payload),
     });
-    showToast('Trade added.');
+    showToast(i18n.t('trades.added'));
     resetAddTradeForm();
     switchTab('trades');
   } catch (e) {
@@ -880,6 +1098,7 @@ addTradeForm.addEventListener('submit', async (e) => {
 
 function resetAddTradeForm() {
   addTradeForm.reset();
+  clearInstrumentSelection();    // drop any picked instrument + unlock the input
   totalPreview.textContent = '—';
   tradeCommOverride.checked = false;
   tradeCommission.readOnly  = true;
@@ -901,11 +1120,24 @@ const CHART_COLORS = {
   other: '#7b8099',
 };
 
+// Distinct fallback palette so trade types with no explicit color still get
+// different slices in the doughnut (cycled by position).
+const TYPE_PALETTE = ['#4f8ef7','#a259ff','#ffaa33','#4caf82','#e6c84f','#2bb6c4','#e05c5c','#d98cff','#5fb0ff','#8a909e'];
+
+// Resolve a chart color for a trade type by name: the user-set color from the
+// trade_types table wins, then the legacy name map, then the cycling palette.
+function tradeTypeColor(name, idx) {
+  const t = tradeTypesList.find(x => x.name.toLowerCase() === String(name).toLowerCase());
+  if (t && t.color) return t.color;
+  return CHART_COLORS[String(name).toLowerCase()] || TYPE_PALETTE[idx % TYPE_PALETTE.length];
+}
+
 let chartMonthly   = null;
 let chartByType    = null;
 let chartGrowth    = null;
 let growthDataFull = [];
 let growthRange    = 'all';
+let lastAnalyticsStats = null;   // cached so a language switch can re-render the cards
 
 function chartScales() {
   const light = document.documentElement.dataset.theme === 'light';
@@ -933,9 +1165,11 @@ async function loadAnalytics() {
   clearError(analyticsError);
 
   try {
-    const fyStartMonth = parseInt(appSettings.fiscal_year_start_month) || 1;
+    // Omit fiscal_year_start_month: the backend defaults to the same configured
+    // setting, and omitting it lets the server serve the cached stats (passing an
+    // explicit value bypasses the cache and re-runs every aggregation).
     const [s, growth] = await Promise.all([
-      apiFetch(`/users/${activeUserId}/stats?fiscal_year_start_month=${fyStartMonth}`),
+      apiFetch(`/users/${activeUserId}/stats`),
       apiFetch(`/users/${activeUserId}/stats/growth`),
     ]);
     renderAnalytics(s);
@@ -950,6 +1184,7 @@ async function loadAnalytics() {
 }
 
 function renderAnalytics(s) {
+  lastAnalyticsStats = s;
   document.getElementById('stat-total-trades').textContent = s.total_trades;
   document.getElementById('stat-buy-volume').textContent   = formatCurrency(s.buy_volume);
   document.getElementById('stat-sell-volume').textContent  = formatCurrency(s.sell_volume);
@@ -966,8 +1201,8 @@ function renderAnalytics(s) {
 
   document.getElementById('stat-fiscal-volume').textContent = formatCurrency(s.this_fiscal_year_volume ?? 0);
   const fyStart = getFiscalYearRange().start;
-  const fyMonth = fyStart.toLocaleString('en-US', { month: 'short' });
-  document.getElementById('stat-fiscal-range').textContent = `${fyMonth} ${fyStart.getFullYear()} — present`;
+  const fyMonth = i18n.t('settings.months.' + (fyStart.getMonth() + 1));
+  document.getElementById('stat-fiscal-range').textContent = i18n.t('analytics.fiscal_range', { month: fyMonth, year: fyStart.getFullYear() });
 
   document.getElementById('stat-top-ticker').textContent = s.most_traded_ticker ?? '—';
 
@@ -998,7 +1233,7 @@ function renderAnalytics(s) {
 
   // Doughnut chart
   const typeLabels = s.by_trade_type.map(t => t.trade_type);
-  const typeColors = typeLabels.map(l => CHART_COLORS[String(l).toLowerCase()] ?? '#7b8099');
+  const typeColors = typeLabels.map((l, i) => tradeTypeColor(l, i));
 
   if (chartByType) chartByType.destroy();
   chartByType = new Chart(document.getElementById('chart-by-type'), {
@@ -1121,7 +1356,7 @@ function renderGrowthChart(data) {
     data: {
       datasets: [
         {
-          label:           'Portfolio Cost Basis',
+          label:           i18n.t('analytics.series_cost_basis'),
           data:            data.map(d => ({ x: d.date, y: d.cost_basis })),
           borderColor:     '#4f8ef7',
           backgroundColor: 'rgba(79,142,247,0.07)',
@@ -1131,7 +1366,7 @@ function renderGrowthChart(data) {
           ...dot,
         },
         {
-          label:           'Realized P&L',
+          label:           i18n.t('analytics.series_realized_pnl'),
           data:            data.map(d => ({ x: d.date, y: d.realized_pnl })),
           borderColor:     pnlColor,
           backgroundColor: pnlFill,
@@ -1198,6 +1433,11 @@ const positionsContent     = document.getElementById('positions-content');
 const positionsTbody       = document.getElementById('positions-tbody');
 const positionsEmpty       = document.getElementById('positions-empty');
 const positionsCashBalance = document.getElementById('positions-cash-balance');
+const posFilterTicker       = document.getElementById('pos-filter-ticker');
+const posFilterAsset        = document.getElementById('pos-filter-asset');
+const posFilterType         = document.getElementById('pos-filter-type');
+const posFilterBroker       = document.getElementById('pos-filter-broker');
+const btnClearPositionFilters = document.getElementById('btn-clear-position-filters');
 
 // ── Add cash (deposit) ──────────────────────────────────────────────────────────
 const btnAddCash    = document.getElementById('btn-add-cash');
@@ -1224,7 +1464,7 @@ addCashForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (!activeUserId) return;
   const amount = parseFloat(addCashAmount.value);
-  if (!(amount > 0)) { showToast('Enter an amount greater than 0.', true); return; }
+  if (!(amount > 0)) { showToast(i18n.t('cash.amount_invalid'), true); return; }
 
   const saveBtn = document.getElementById('btn-save-cash');
   saveBtn.disabled = true;
@@ -1234,7 +1474,7 @@ addCashForm.addEventListener('submit', async (e) => {
       body: JSON.stringify({ amount, note: addCashNote.value.trim() || null }),
     });
     setCashBalance(res.balance);
-    showToast(`Added ${formatCurrency(amount)} to cash.`);
+    showToast(i18n.t('cash.added', { amount: formatCurrency(amount) }));
     closeAddCashForm();
     loadCash();   // refresh the history so the new deposit appears
   } catch (err) {
@@ -1316,7 +1556,7 @@ function loadMoreCash() {
       }
       renderCashRows(newRows, { append: true });
     })
-    .catch(e => showToast('Failed to load more: ' + e.message, true))
+    .catch(e => showToast(i18n.t('common.load_more_failed', { error: e.message }), true))
     .finally(() => { cashLoading = false; updateCashChrome(); });
 }
 
@@ -1330,9 +1570,10 @@ function renderCashRows(rows, { append }) {
     const tr = document.createElement('tr');
     const cls  = c.amount >= 0 ? 'pnl-pos' : 'pnl-neg';
     const sign = c.amount > 0 ? '+' : '';
+    const typeLabel = i18n.t('cash.types.' + c.transaction_type);
     tr.innerHTML = `
       <td>${formatDate(c.created_at)}</td>
-      <td>${badge(c.transaction_type)}</td>
+      <td><span class="badge badge-${c.transaction_type.replace(/_/g, '-')}">${escHtml(typeLabel)}</span></td>
       <td class="num ${cls}">${sign}${formatCurrency(c.amount)}</td>
       <td class="notes-cell" title="${escHtml(c.note ?? '')}">${escHtml(c.note ?? '—')}</td>
     `;
@@ -1348,14 +1589,14 @@ function updateCashChrome() {
     return;
   }
   cashCountHeader.classList.remove('hidden');
-  cashCountText.textContent = `Showing ${fmtCount(loaded)} of ${fmtCount(cashTotal)} transactions`;
+  cashCountText.textContent = i18n.t('cash.showing', { shown: fmtCount(loaded), total: fmtCount(cashTotal) });
 
   const capped = loaded >= CASH_DOM_CAP && (cashHasMore || cashTotal > loaded);
   renderListFooter(cashLoadmore, {
     loaded, total: cashTotal,
     hasMore: cashHasMore && !capped,
-    capped, pageSize: CASH_PAGE, nounP: 'transactions',
-    capNotice: 'Showing 500 transactions. Older transactions are hidden to keep the page responsive.',
+    capped, pageSize: CASH_PAGE, nounP: i18n.t('common.nouns.transactions'),
+    capNotice: i18n.t('cash.cap_notice'),
     onMore: loadMoreCash,
   });
 }
@@ -1424,8 +1665,24 @@ const POSITION_SORT_COLUMNS = {
   pnlpct:  { field: 'unrealized_pnl_pct',       type: 'number' },
 };
 
-function getSortedPositions() {
-  const data = currentPositions.slice();   // stable sort keeps API order for ties
+// Active filters narrow the cached positions client-side (no re-fetch). A position
+// matches a broker filter when any of its lots is held at that broker.
+function getFilteredPositions() {
+  const q      = posFilterTicker.value.trim().toLowerCase();
+  const asset  = posFilterAsset.value;
+  const type   = posFilterType.value;
+  const broker = posFilterBroker.value;
+  return currentPositions.filter(p => {
+    if (q && !`${p.ticker} ${p.symbol || ''}`.toLowerCase().includes(q)) return false;
+    if (asset && (p.asset_class || '') !== asset) return false;
+    if (type && p.trade_type !== type) return false;
+    if (broker && !(p.lots || []).some(l => String(l.broker_id) === broker)) return false;
+    return true;
+  });
+}
+
+function getSortedPositions(base = currentPositions) {
+  const data = base.slice();   // stable sort keeps API order for ties
   if (!activePositionSort) return data;
   const col  = POSITION_SORT_COLUMNS[activePositionSort.key];
   const sign = activePositionSort.dir === 'asc' ? 1 : -1;
@@ -1446,8 +1703,36 @@ function updatePositionSortIndicators() {
 }
 
 function applyPositionSort() {
-  renderPositionsRows(getSortedPositions());
+  renderPositionsRows(getSortedPositions(getFilteredPositions()));
   updatePositionSortIndicators();
+}
+
+// Rebuild the filter dropdowns from the holdings actually present, preserving the
+// user's current choice when it still applies. Asset-class and type options reflect
+// what's held; broker options map ids (from lots) to broker names.
+function fillSelectPreserve(sel, values, labelFn, allLabel) {
+  const prev = sel.value;
+  sel.innerHTML = '';
+  sel.add(new Option(allLabel, ''));
+  for (const v of values) sel.add(new Option(labelFn(v), v));
+  sel.value = [...sel.options].some(o => o.value === prev) ? prev : '';
+}
+
+function populatePositionFilters() {
+  const assets = [...new Set(currentPositions.map(p => p.asset_class).filter(Boolean))].sort();
+  fillSelectPreserve(posFilterAsset, assets, assetClassLabel, i18n.t('positions.all_asset_classes'));
+
+  const types = [...new Set(currentPositions.map(p => p.trade_type).filter(Boolean))].sort();
+  fillSelectPreserve(posFilterType, types, v => v, i18n.t('positions.all_types'));
+
+  const brokerIds = [...new Set(
+    currentPositions.flatMap(p => (p.lots || []).map(l => l.broker_id)).filter(id => id != null)
+  )].map(String);
+  fillSelectPreserve(
+    posFilterBroker, brokerIds,
+    id => (brokersById.get(parseInt(id))?.name) || `Broker ${id}`,
+    i18n.t('positions.all_brokers'),
+  );
 }
 
 function onPositionSortClick(key) {
@@ -1469,14 +1754,31 @@ document.querySelectorAll('#positions-table th[data-sort-key]').forEach(th => {
 function renderPositions(positions, balance) {
   currentPositions = positions;
   positionsBalance = balance;
+  populatePositionFilters();
   applyPositionSort();
 }
+
+posFilterTicker.addEventListener('input', applyPositionSort);
+posFilterAsset.addEventListener('change', applyPositionSort);
+posFilterType.addEventListener('change', applyPositionSort);
+posFilterBroker.addEventListener('change', applyPositionSort);
+btnClearPositionFilters.addEventListener('click', () => {
+  posFilterTicker.value = '';
+  posFilterAsset.value  = '';
+  posFilterType.value   = '';
+  posFilterBroker.value = '';
+  applyPositionSort();
+});
 
 function renderPositionsRows(positions) {
   if (positionsBalance != null) positionsCashBalance.textContent = formatCurrency(positionsBalance);
   positionsTbody.innerHTML = '';
 
   if (!positions.length) {
+    // Distinguish "no holdings at all" from "filters hid everything".
+    positionsEmpty.textContent = currentPositions.length
+      ? i18n.t('positions.no_match')
+      : i18n.t('positions.no_positions');
     positionsEmpty.classList.remove('hidden');
     return;
   }
@@ -1485,8 +1787,13 @@ function renderPositionsRows(positions) {
   positions.forEach(p => {
     const tr = document.createElement('tr');
     tr.dataset.ticker = p.ticker;
+    // Prices are fetched by Yahoo symbol; the display ticker stays user-friendly.
+    tr.dataset.symbol = p.symbol || p.ticker;
     tr.innerHTML = `
-      <td><strong>${escHtml(p.ticker)}</strong></td>
+      <td class="ticker-cell">
+        ${exchangeBadge(p.exchange)}
+        <strong${p.name ? ` title="${escHtml(p.name)}"` : ''}>${escHtml(p.ticker)}</strong>
+      </td>
       <td>${badge(p.trade_type)}</td>
       <td class="num">${formatNumber(p.total_remaining_quantity)}</td>
       <td class="num">${formatCurrency(p.avg_cost_per_unit)}</td>
@@ -1526,34 +1833,35 @@ function updatePricesLabel(positions) {
   const oldest     = Math.min(...timestamps);
   const minutesAgo = Math.round((Date.now() - oldest) / 60_000);
 
-  if (minutesAgo < 1)       label.textContent = 'Prices last updated: just now';
-  else if (minutesAgo === 1) label.textContent = 'Prices last updated: 1 min ago';
-  else                       label.textContent = `Prices last updated: ${minutesAgo} min ago`;
+  const ago = minutesAgo < 1
+    ? i18n.t('common.just_now')
+    : i18n.t('common.ago', { n: minutesAgo, unit: 'minutes' });
+  label.textContent = i18n.t('positions.last_updated', { ago });
 }
 
 // ── Refresh prices ─────────────────────────────────────────────────────────────
 document.getElementById('btn-refresh-prices').addEventListener('click', async () => {
   if (!activeUserId) return;
 
-  const tickers = [...new Set(
-    Array.from(positionsTbody.querySelectorAll('tr[data-ticker]'))
-      .map(tr => tr.dataset.ticker)
+  const symbols = [...new Set(
+    Array.from(positionsTbody.querySelectorAll('tr[data-symbol]'))
+      .map(tr => tr.dataset.symbol)
   )];
-  if (!tickers.length) return;
+  if (!symbols.length) return;
 
   const btn   = document.getElementById('btn-refresh-prices');
   const label = document.getElementById('prices-last-updated');
   btn.disabled     = true;
-  label.textContent = 'Refreshing…';
+  label.textContent = i18n.t('positions.refreshing');
   showPriceSkeleton();
 
   try {
     await apiFetch('/prices/refresh', {
       method: 'POST',
-      body: JSON.stringify({ tickers, source: 'yahoo_finance' }),
+      body: JSON.stringify({ symbols, source: 'yahoo_finance' }),
     });
   } catch (e) {
-    showToast('Price refresh failed: ' + e.message, true);
+    showToast(i18n.t('positions.refresh_failed', { error: e.message }), true);
   }
 
   // Re-fetch regardless of whether the refresh call succeeded — cache may
@@ -1566,7 +1874,7 @@ document.getElementById('btn-refresh-prices').addEventListener('click', async ()
     renderPositions(positions, cash.balance);
     updatePricesLabel(positions);
   } catch (e) {
-    showToast('Failed to reload positions: ' + e.message, true);
+    showToast(i18n.t('positions.reload_failed', { error: e.message }), true);
     positionsTbody.querySelectorAll('.price-col').forEach(cell => {
       cell.innerHTML = '<span class="price-na">—</span>';
     });
@@ -1611,7 +1919,7 @@ function openSellModal(position) {
 
   sellLotsTbody.innerHTML = lots.map(lot => `
     <tr>
-      <td>${formatDate(lot.trade_date)}${lot.status === 'partial' ? '<span class="lot-status-partial">(partial)</span>' : ''}</td>
+      <td>${formatDate(lot.trade_date)}${lot.status === 'partial' ? `<span class="lot-status-partial">${escHtml(i18n.t('sell_form.lot_partial'))}</span>` : ''}</td>
       <td class="num">${formatNumber(lot.remaining_quantity)}</td>
       <td class="num">${formatCurrency(lot.price_per_unit)}</td>
     </tr>
@@ -1619,7 +1927,7 @@ function openSellModal(position) {
 
   const maxQty = position.total_remaining_quantity;
   sellQtyInput.max   = maxQty;
-  sellMaxHint.textContent = `max ${formatNumber(maxQty)}`;
+  sellMaxHint.textContent = i18n.t('sell_form.max_hint', { n: formatNumber(maxQty) });
   sellQtyInput.value  = '';
   sellDateInput.value  = todayISO();
   sellNotesInput.value = '';
@@ -1628,16 +1936,16 @@ function openSellModal(position) {
   // as a hint. Falls back to blank when no price is available.
   if (position.current_price != null) {
     sellPriceInput.value = position.current_price;
-    sellCurrentPrice.textContent = `Current price: ${formatCurrency(position.current_price)}`;
+    sellCurrentPrice.textContent = i18n.t('sell_form.current_price', { price: formatCurrency(position.current_price) });
   } else {
     sellPriceInput.value = '';
-    sellCurrentPrice.textContent = 'Current price unavailable';
+    sellCurrentPrice.textContent = i18n.t('sell_form.current_price_unavailable');
   }
 
   sellPreviewBar.className = 'sell-preview-bar hidden';
   clearError(sellErrorEl);
   sellConfirmBtn.disabled    = false;
-  sellConfirmBtn.textContent = 'Confirm Sale';
+  sellConfirmBtn.textContent = i18n.t('sell_form.confirm');
 
   sellModalOverlay.classList.remove('hidden');
   sellQtyInput.focus();
@@ -1692,9 +2000,9 @@ function updateSellPreview() {
   const sign = est.netPnl >= 0 ? '+' : '';
 
   sellPreviewBar.innerHTML =
-    `<div class="sell-preview-line"><span>Proceeds</span><span>${formatCurrency(est.proceeds)}</span></div>` +
-    `<div class="sell-preview-line"><span>Est. commission</span><span>−${formatCurrency(est.sellComm)}</span></div>` +
-    `<div class="sell-preview-line sell-preview-total"><span>Net P&amp;L</span>` +
+    `<div class="sell-preview-line"><span>${escHtml(i18n.t('sell_form.proceeds_label'))}</span><span>${formatCurrency(est.proceeds)}</span></div>` +
+    `<div class="sell-preview-line"><span>${escHtml(i18n.t('sell_form.commission_label'))}</span><span>−${formatCurrency(est.sellComm)}</span></div>` +
+    `<div class="sell-preview-line sell-preview-total"><span>${escHtml(i18n.t('sell_form.net_pnl_label'))}</span>` +
       `<span>${sign}${formatCurrency(est.netPnl)}</span></div>`;
   sellPreviewBar.className = `sell-preview-bar ${est.netPnl >= 0 ? 'positive' : 'negative'}`;
 }
@@ -1743,7 +2051,7 @@ sellConfirmBtn.addEventListener('click', async () => {
   }
 
   sellConfirmBtn.disabled    = true;
-  sellConfirmBtn.textContent = 'Selling…';
+  sellConfirmBtn.textContent = i18n.t('sell_form.selling');
 
   try {
     for (const alloc of allocations) {
@@ -1758,12 +2066,12 @@ sellConfirmBtn.addEventListener('click', async () => {
       });
     }
     closeSellModal();
-    showToast('Sale recorded.');
+    showToast(i18n.t('sell_form.recorded'));
     loadPositions(); // refreshes both positions table and cash balance
   } catch (e) {
     showError(sellErrorEl, e.message);
     sellConfirmBtn.disabled    = false;
-    sellConfirmBtn.textContent = 'Confirm Sale';
+    sellConfirmBtn.textContent = i18n.t('sell_form.confirm');
   }
 });
 
@@ -1796,7 +2104,9 @@ const zoomDisplayEl   = document.getElementById('zoom-display');
 const settingSidebarEl= document.getElementById('setting-sidebar');
 const settingDensityEl= document.getElementById('setting-density');
 
-function openSettings() {
+// Reflect the stored UI preferences (theme / zoom / sidebar / density) into their
+// controls. Runs whenever the settings popup opens (via populateGeneralSettings).
+function syncUiPrefControls() {
   settingThemeEl.querySelectorAll('.opt-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.value === currentSettings.theme));
   settingZoomEl.value = currentSettings.zoom;
@@ -1805,9 +2115,14 @@ function openSettings() {
     b.classList.toggle('active', +b.dataset.value === currentSettings.sidebarWidth));
   settingDensityEl.querySelectorAll('.opt-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.value === currentSettings.density));
-  settingsOverlay.classList.remove('hidden');
 }
 
+// All general + appearance settings live in this popup (a fixed overlay) so the UI
+// Scale slider can't reflow the page underneath it while being dragged.
+function openSettings() {
+  populateGeneralSettings();   // fills the app-setting fields + syncs the pref controls
+  settingsOverlay.classList.remove('hidden');
+}
 function closeSettings() { settingsOverlay.classList.add('hidden'); }
 
 document.getElementById('btn-settings').addEventListener('click', openSettings);
@@ -1940,7 +2255,6 @@ document.querySelectorAll('.settings-nav-item').forEach(item => {
     const page = document.getElementById('page-' + item.dataset.page);
     if (page) page.classList.remove('hidden');
 
-    if (item.dataset.page === 'general')     populateGeneralSettings();
     if (item.dataset.page === 'brokers')     loadBrokers();
     if (item.dataset.page === 'trade-types') loadTradeTypesPage();
     if (item.dataset.page === 'data')        { clearRestoreResult(); loadPriceCacheCount(); }
@@ -1951,18 +2265,20 @@ document.querySelectorAll('.settings-nav-item').forEach(item => {
 function updateDateFormatPreview() {
   const fmt = document.getElementById('setting-date-format').value;
   document.getElementById('date-format-preview').textContent =
-    'Preview: ' + formatDate(_localISO(new Date()), fmt);
+    i18n.t('settings.date_preview', { date: formatDate(_localISO(new Date()), fmt) });
 }
 
 // Reflect the current appSettings into the form controls.
 function populateGeneralSettings() {
   document.getElementById('setting-display-name').value      = appSettings.display_name ?? '';
+  document.getElementById('setting-language').value          = appSettings.language ?? 'en';
   document.getElementById('setting-currency').value          = appSettings.currency ?? 'USD';
   document.getElementById('setting-date-format').value       = appSettings.date_format ?? 'MM/DD/YYYY';
   document.getElementById('setting-decimal-separator').value = appSettings.decimal_separator ?? '.';
   document.getElementById('setting-refresh-interval').value  = String(appSettings.price_refresh_interval_minutes ?? '15');
   document.getElementById('setting-fiscal-month').value      = String(appSettings.fiscal_year_start_month ?? '1');
   updateDateFormatPreview();
+  syncUiPrefControls();   // theme / zoom / sidebar / density controls (same page)
 }
 
 const _statusTimers = new WeakMap();
@@ -1970,14 +2286,14 @@ function showSettingStatus(el, state, msg) {
   if (!el) return;
   clearTimeout(_statusTimers.get(el));
   if (state === 'saved') {
-    el.innerHTML = `${icon('check', 'icon-sm')} Saved`;
+    el.innerHTML = `${icon('check', 'icon-sm')} ${escHtml(i18n.t('settings.saved'))}`;
     el.className = 'settings-status saved';
     _statusTimers.set(el, setTimeout(() => {
       el.textContent = '';
       el.className = 'settings-status';
     }, 2000));
   } else {
-    el.textContent = msg || 'Failed to save';
+    el.textContent = msg || i18n.t('settings.save_failed');
     el.className = 'settings-status failed';
   }
 }
@@ -1992,18 +2308,80 @@ async function saveSetting(key, value, statusEl) {
     showSettingStatus(statusEl, 'saved');
     if (key === 'display_name') updateGreeting();
   } catch (e) {
-    showSettingStatus(statusEl, 'failed', 'Failed to save');
+    showSettingStatus(statusEl, 'failed', i18n.t('settings.save_failed'));
   }
 }
 
-document.querySelectorAll('#page-general [data-key]').forEach(el => {
-  el.addEventListener('change', () => {
+document.querySelectorAll('#settings-modal [data-key]').forEach(el => {
+  el.addEventListener('change', async () => {
     const key = el.dataset.key;
-    const statusEl = document.querySelector(`#page-general [data-status="${key}"]`);
-    saveSetting(key, el.value, statusEl);
+    const statusEl = document.querySelector(`#settings-modal [data-status="${key}"]`);
+    await saveSetting(key, el.value, statusEl);
+    // Manually changing the date format or decimal separator pins them, so a later
+    // language switch won't auto-override the user's explicit choice.
+    if (key === 'date_format' || key === 'decimal_separator') {
+      appSettings.date_format_manual_override = '1';
+      apiFetch('/settings', {
+        method: 'PUT', body: JSON.stringify({ date_format_manual_override: '1' }),
+      }).catch(() => {});
+    }
+    // Anything that changes how money/dates render must re-paint the data views.
+    if (key === 'currency' || key === 'date_format' || key === 'decimal_separator') {
+      rerenderDynamicViews();
+    }
   });
 });
 document.getElementById('setting-date-format').addEventListener('change', updateDateFormatPreview);
+
+// ── Language switcher ─────────────────────────────────────────────────────────
+// Auto date/number defaults per language, unless the user has pinned them.
+async function applyLocaleFormatDefaults(lang) {
+  if (String(appSettings.date_format_manual_override) === '1') return;
+  const date_format       = lang === 'de' ? 'DD.MM.YYYY' : 'MM/DD/YYYY';
+  const decimal_separator = lang === 'de' ? ',' : '.';
+  if (appSettings.date_format === date_format && appSettings.decimal_separator === decimal_separator) return;
+  try {
+    const updated = await apiFetch('/settings', {
+      method: 'PUT', body: JSON.stringify({ date_format, decimal_separator }),
+    });
+    Object.assign(appSettings, updated);
+  } catch (e) {
+    console.warn('Failed to apply locale format defaults:', e.message);
+  }
+}
+
+// Re-paint every data-bound view from cached data (static text is handled by
+// i18n.applyToDOM). Called after a language switch or a format-setting change.
+function rerenderDynamicViews() {
+  i18n.applyToDOM();
+  updateGreeting();
+  if (typeof currentTrades !== 'undefined' && currentTrades) {
+    renderTradesRows(currentTrades, { append: false });
+    updateTradesChrome();
+  }
+  if (typeof currentPositions !== 'undefined' && currentPositions) {
+    populatePositionFilters();
+    applyPositionSort();
+    updatePricesLabel(currentPositions);
+  }
+  if (typeof cashTransactions !== 'undefined' && cashTransactions) {
+    renderCashRows(cashTransactions, { append: false });
+    updateCashChrome();
+  }
+  if (lastAnalyticsStats) renderAnalytics(lastAnalyticsStats);
+  if (growthDataFull && growthDataFull.length) {
+    renderGrowthChart(filterGrowth(growthDataFull, growthRange));
+  }
+}
+
+document.getElementById('setting-language').addEventListener('change', async (e) => {
+  const lang = e.target.value;
+  await i18n.setLanguage(lang);          // load locale, persist, re-translate static DOM
+  await applyLocaleFormatDefaults(lang); // date/number defaults unless pinned
+  populateGeneralSettings();             // reflect any auto-changed format selects
+  rerenderDynamicViews();                // re-paint tables / charts / cards
+  showToast(i18n.t('settings.language_changed'));
+});
 
 // ── Data page: backup / restore ───────────────────────────────────────────────
 const restoreFileInput = document.getElementById('restore-file-input');
@@ -2034,13 +2412,13 @@ btnRestoreBackup.addEventListener('click', async () => {
 
   const file = restoreFileInput.files[0];
   if (!file) {
-    setRestoreResult('Choose a .db backup file first.', 'error');
+    setRestoreResult(i18n.t('settings.restore_choose_file'), 'error');
     return;
   }
 
   const ok = await confirmDialog(
-    'This will replace all current data with the backup. A safety backup of your current data will be created first. Continue?',
-    'Continue'
+    i18n.t('settings.restore_confirm_safety'),
+    i18n.t('common.continue')
   );
   if (!ok) return;
 
@@ -2054,7 +2432,7 @@ btnRestoreBackup.addEventListener('click', async () => {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       throw new Error(err.detail || res.statusText);
     }
-    setRestoreResult('Database restored successfully. Reloading…', 'success');
+    setRestoreResult(i18n.t('settings.restore_success_reloading'), 'success');
     setTimeout(() => window.location.reload(), 2000);
   } catch (e) {
     setRestoreResult(e.message, 'error');
@@ -2068,7 +2446,7 @@ const cacheResult     = document.getElementById('cache-result');
 const btnClearCache   = document.getElementById('btn-clear-cache');
 
 function setCacheCount(n) {
-  priceCacheCount.textContent = `${n} ticker${n === 1 ? '' : 's'} cached`;
+  priceCacheCount.textContent = i18n.t('settings.tickers_cached', { n });
 }
 
 async function loadPriceCacheCount() {
@@ -2078,7 +2456,7 @@ async function loadPriceCacheCount() {
     const { count } = await apiFetch('/settings/price-cache');
     setCacheCount(count);
   } catch (e) {
-    priceCacheCount.textContent = 'Cache size unavailable';
+    priceCacheCount.textContent = i18n.t('settings.cache_unavailable');
   }
 }
 
@@ -2088,7 +2466,7 @@ btnClearCache.addEventListener('click', async () => {
   try {
     const { deleted } = await apiFetch('/settings/price-cache', { method: 'DELETE' });
     setCacheCount(0);
-    cacheResult.textContent = `Cleared ${deleted} cached price${deleted === 1 ? '' : 's'}.`;
+    cacheResult.textContent = i18n.t('settings.cache_cleared', { n: deleted });
     cacheResult.className = 'inline-success';
   } catch (e) {
     cacheResult.textContent = e.message;
@@ -2125,7 +2503,7 @@ async function loadBrokers() {
     const brokers = await apiFetch('/brokers');
     renderBrokersTable(brokers);
   } catch (e) {
-    showError(brokersError, 'Failed to load brokers: ' + e.message);
+    showError(brokersError, i18n.t('settings.brokers_load_failed', { error: e.message }));
   } finally {
     brokersSpinner.classList.add('hidden');
   }
@@ -2167,8 +2545,8 @@ function fillTypeSelect(sel, placeholder) {
 }
 
 function populateTradeTypeDropdowns() {
-  fillTypeSelect(filterTradeType, 'All types');
-  fillTypeSelect(tradeType, 'Select…');
+  fillTypeSelect(filterTradeType, i18n.t('trades.all_types'));
+  fillTypeSelect(tradeType, i18n.t('common.select'));
   fillTypeSelect(editType);   // no placeholder — always has a value
 }
 
@@ -2206,18 +2584,58 @@ function renderTradeTypesTable() {
   tradeTypesTable.classList.remove('hidden');
 }
 
+// A compact inline color picker (swatch → native picker, plus a clear button).
+// Reuses the broker color-picker styles. Returns { el, value } where `value` is a
+// live getter giving the current "#rrggbb" or null. Used by the create + edit rows.
+function makeColorPicker(initial) {
+  const wrap = document.createElement('span');
+  wrap.className = 'color-picker-row type-color-picker';
+
+  const swatch = document.createElement('button');
+  swatch.type = 'button';
+  swatch.className = 'color-swatch-btn';
+  swatch.title = i18n.t('settings.broker_color_swatch_title');
+
+  const native = document.createElement('input');
+  native.type = 'color';
+  native.className = 'color-native-hidden';
+  native.tabIndex = -1;
+
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'color-clear-btn';
+  clear.title = i18n.t('settings.broker_color_clear_title');
+  clear.innerHTML = icon('close', 'icon-sm');
+
+  let value = (initial && _HEX_RE.test(initial)) ? initial : null;
+  function sync() {
+    if (value) { swatch.style.background = value; swatch.classList.add('has-color'); native.value = value; }
+    else       { swatch.style.background = ''; swatch.classList.remove('has-color'); native.value = '#4f8ef7'; }
+  }
+  swatch.addEventListener('click', () => native.click());
+  native.addEventListener('input', () => { value = native.value; sync(); });
+  clear.addEventListener('click', () => { value = null; sync(); });
+  sync();
+
+  wrap.append(swatch, native, clear);
+  return { el: wrap, get value() { return value; } };
+}
+
 function renderTypeRowDisplay(tr, t) {
   const typeBadge = t.is_default
-    ? '<span class="badge badge-default-type">Default</span>'
-    : '<span class="badge badge-custom-type">Custom</span>';
+    ? `<span class="badge badge-default-type">${escHtml(i18n.t('settings.type_default'))}</span>`
+    : `<span class="badge badge-custom-type">${escHtml(i18n.t('settings.type_custom'))}</span>`;
   // Default types cannot be deleted, so they get no Delete button.
-  const delBtn = t.is_default ? '' : `<button class="icon-btn danger type-del-btn" title="Delete type" aria-label="Delete type">${icon('trash', 'icon-sm')}</button>`;
+  const delBtn = t.is_default ? '' : `<button class="icon-btn danger type-del-btn" title="${escHtml(i18n.t('settings.delete_type_title'))}" aria-label="${escHtml(i18n.t('settings.delete_type_title'))}">${icon('trash', 'icon-sm')}</button>`;
+  const dot = (t.color && _HEX_RE.test(t.color))
+    ? `<span class="broker-color-dot" style="background:${t.color}"></span>`
+    : `<span class="broker-color-dot broker-color-dot--empty"></span>`;
   tr.innerHTML = `
-    <td><strong>${escHtml(t.name)}</strong></td>
+    <td><strong>${dot}${escHtml(t.name)}</strong></td>
     <td class="num">${t.usage_count}</td>
     <td>${typeBadge}</td>
     <td>
-      <button class="secondary type-edit-btn">Edit</button>
+      <button class="secondary type-edit-btn">${escHtml(i18n.t('common.edit'))}</button>
       ${delBtn}
     </td>`;
   tr.querySelector('.type-edit-btn').addEventListener('click', () => renderTypeRowEdit(tr, t));
@@ -2230,40 +2648,50 @@ function renderTypeRowEdit(tr, t) {
     <td colspan="4">
       <div class="type-edit-row">
         <input type="text" class="type-edit-input" maxlength="50" />
-        <button class="type-save-btn">Save</button>
-        <button type="button" class="secondary type-cancel-btn">Cancel</button>
+        <span class="type-color-slot"></span>
+        <button class="type-save-btn">${escHtml(i18n.t('common.save'))}</button>
+        <button type="button" class="secondary type-cancel-btn">${escHtml(i18n.t('common.cancel'))}</button>
       </div>
     </td>`;
   const input = tr.querySelector('.type-edit-input');
   input.value = t.name;
+  const picker = makeColorPicker(t.color);
+  tr.querySelector('.type-color-slot').replaceWith(picker.el);
   input.focus();
   input.select();
   tr.querySelector('.type-cancel-btn').addEventListener('click', () => renderTypeRowDisplay(tr, t));
-  tr.querySelector('.type-save-btn').addEventListener('click', () => saveTypeRename(t, input.value));
+  tr.querySelector('.type-save-btn').addEventListener('click', () => saveTypeEdit(t, input.value, picker.value));
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter')  { e.preventDefault(); saveTypeRename(t, input.value); }
+    if (e.key === 'Enter')  { e.preventDefault(); saveTypeEdit(t, input.value, picker.value); }
     if (e.key === 'Escape') renderTypeRowDisplay(tr, t);
   });
 }
 
-async function saveTypeRename(t, rawName) {
+async function saveTypeEdit(t, rawName, color) {
   const name = rawName.trim();
-  if (!name) { showToast('Name cannot be empty.', true); return; }
-  if (name === t.name) { renderTradeTypesTable(); return; }   // no change
+  if (!name) { showToast(i18n.t('settings.type_name_empty'), true); return; }
 
-  const ok = await confirmDialog(
-    `Renaming this type will update all ${t.usage_count} trades that use it. Continue?`,
-    'Rename'
-  );
-  if (!ok) return;
+  const nameChanged  = name !== t.name;
+  const colorChanged = (color || null) !== (t.color || null);
+  if (!nameChanged && !colorChanged) { renderTradeTypesTable(); return; }   // nothing to save
+
+  // Renaming re-points existing trades, so confirm that; a color-only edit is silent.
+  if (nameChanged) {
+    const ok = await confirmDialog(
+      i18n.t('settings.type_rename_confirm', { n: t.usage_count }),
+      i18n.t('common.rename')
+    );
+    if (!ok) return;
+  }
 
   try {
     const res = await apiFetch(`/trade-types/${t.id}`, {
       method: 'PUT',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, color }),
     });
-    showToast(`Renamed. ${res.trades_updated} trades updated.`);
-    await loadTradeTypes();      // refresh dropdowns + list
+    showToast(nameChanged ? i18n.t('settings.type_renamed', { n: res.trades_updated })
+                          : i18n.t('settings.saved'));
+    await loadTradeTypes();      // refresh dropdowns + list (+ chart colors next open)
     renderTradeTypesTable();
   } catch (e) {
     showToast(e.message, true);  // e.g. duplicate name
@@ -2271,27 +2699,33 @@ async function saveTypeRename(t, rawName) {
 }
 
 async function deleteTradeType(t) {
-  const ok = await confirmDialog(`Delete trade type "${t.name}"?`);
+  const ok = await confirmDialog(i18n.t('settings.delete_type_confirm', { name: t.name }));
   if (!ok) return;
   clearError(tradeTypesError);
   try {
     await apiFetch(`/trade-types/${t.id}`, { method: 'DELETE' });
-    showToast('Trade type deleted.');
+    showToast(i18n.t('settings.type_deleted'));
     await loadTradeTypes();
     renderTradeTypesTable();
   } catch (e) {
     if (e.status === 400) {
-      showError(tradeTypesError, e.message + ' Reassign those trades before deleting this type.');
+      showError(tradeTypesError, e.message + ' ' + i18n.t('settings.type_in_use_hint'));
     } else {
       showError(tradeTypesError, e.message);
     }
   }
 }
 
+let addTypeColorPicker = null;
 document.getElementById('btn-add-trade-type').addEventListener('click', () => {
   tradeTypeFormWrap.classList.remove('hidden');
   tradeTypeNameInput.value = '';
   clearError(tradeTypeFormError);
+  // Fresh color picker (defaults to "no color") mounted into the form slot.
+  const slot = document.getElementById('trade-type-color-slot');
+  slot.innerHTML = '';
+  addTypeColorPicker = makeColorPicker(null);
+  slot.appendChild(addTypeColorPicker.el);
   tradeTypeNameInput.focus();
 });
 
@@ -2304,10 +2738,11 @@ tradeTypeForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const name = tradeTypeNameInput.value.trim();
   clearError(tradeTypeFormError);
-  if (!name) { showError(tradeTypeFormError, 'Name cannot be empty.'); return; }
+  if (!name) { showError(tradeTypeFormError, i18n.t('settings.type_name_empty')); return; }
+  const color = addTypeColorPicker ? addTypeColorPicker.value : null;
   try {
-    await apiFetch('/trade-types', { method: 'POST', body: JSON.stringify({ name }) });
-    showToast('Trade type added.');
+    await apiFetch('/trade-types', { method: 'POST', body: JSON.stringify({ name, color }) });
+    showToast(i18n.t('settings.type_added'));
     tradeTypeFormWrap.classList.add('hidden');
     await loadTradeTypes();
     renderTradeTypesTable();
@@ -2382,7 +2817,7 @@ function renderBrokersTable(brokers) {
       : `<span class="broker-color-dot broker-color-dot--empty"></span>`;
     const isDefault = String(b.id) === String(appSettings.default_broker_id || '');
     const check = isDefault
-      ? `<span class="broker-default-check" title="Default broker">${icon('check', 'icon-sm')}</span>`
+      ? `<span class="broker-default-check" title="${escHtml(i18n.t('settings.default_broker_check_title'))}">${icon('check', 'icon-sm')}</span>`
       : '';
     const tr = document.createElement('tr');
     tr.innerHTML = `
@@ -2390,9 +2825,9 @@ function renderBrokersTable(brokers) {
       <td>${sourceBadge(b.price_source)}</td>
       <td class="broker-notes-cell" title="${escHtml(b.notes ?? '')}">${escHtml(b.notes ?? '—')}</td>
       <td>
-        <button class="secondary broker-default-btn"${isDefault ? ' disabled' : ''}>${isDefault ? 'Default' : 'Set as default'}</button>
-        <button class="secondary broker-edit-btn">Edit</button>
-        <button class="icon-btn danger broker-del-btn" title="Delete broker" aria-label="Delete broker">${icon('trash', 'icon-sm')}</button>
+        <button class="secondary broker-default-btn"${isDefault ? ' disabled' : ''}>${escHtml(isDefault ? i18n.t('settings.type_default') : i18n.t('settings.broker_set_default'))}</button>
+        <button class="secondary broker-edit-btn">${escHtml(i18n.t('common.edit'))}</button>
+        <button class="icon-btn danger broker-del-btn" title="${escHtml(i18n.t('settings.delete_broker_title'))}" aria-label="${escHtml(i18n.t('settings.delete_broker_title'))}">${icon('trash', 'icon-sm')}</button>
       </td>
     `;
     tr.querySelector('.broker-default-btn').addEventListener('click', () => setDefaultBroker(b.id));
@@ -2405,7 +2840,7 @@ function renderBrokersTable(brokers) {
 
 function openBrokerForm(broker) {
   editingBrokerId             = broker ? broker.id : null;
-  brokerFormTitle.textContent = broker ? 'Edit Broker' : 'Add Broker';
+  brokerFormTitle.textContent = i18n.t(broker ? 'settings.edit_broker' : 'settings.add_broker');
   brokerNameInput.value         = broker ? broker.name         : '';
   brokerSourceInput.value       = broker ? broker.price_source : 'yahoo_finance';
   brokerNotesInput.value        = broker ? (broker.notes ?? '') : '';
@@ -2443,9 +2878,9 @@ brokerForm.addEventListener('submit', async (e) => {
   const commissionFlat    = parseFloat(brokerCommFlatInput.value)    || 0;
   const commissionPerUnit = parseFloat(brokerCommPerUnitInput.value) || 0;
 
-  if (!name) { showError(brokerFormError, 'Name is required.'); return; }
+  if (!name) { showError(brokerFormError, i18n.t('settings.broker_name_required')); return; }
   if (commissionFlat < 0 || commissionPerUnit < 0) {
-    showError(brokerFormError, 'Commission fees cannot be negative.');
+    showError(brokerFormError, i18n.t('settings.broker_commission_negative'));
     return;
   }
 
@@ -2459,7 +2894,7 @@ brokerForm.addEventListener('submit', async (e) => {
       commission_flat: commissionFlat, commission_per_unit: commissionPerUnit,
     }) });
     closeBrokerForm();
-    showToast(editingBrokerId ? 'Broker updated.' : 'Broker created.');
+    showToast(i18n.t(editingBrokerId ? 'settings.broker_updated' : 'settings.broker_created'));
     loadBrokers();
   } catch (e) {
     showError(brokerFormError, e.message);
@@ -2475,7 +2910,7 @@ async function setDefaultBroker(id) {
       body: JSON.stringify({ default_broker_id: id }),
     });
     Object.assign(appSettings, updated);
-    showToast('Default broker set.');
+    showToast(i18n.t('settings.default_broker_set'));
     loadBrokers();   // re-render to move the checkmark
   } catch (e) {
     showToast(e.message, true);
@@ -2483,7 +2918,7 @@ async function setDefaultBroker(id) {
 }
 
 async function deleteBroker(id, name) {
-  const ok = await confirmDialog(`Delete broker "${name}"? This cannot be undone.`);
+  const ok = await confirmDialog(i18n.t('settings.delete_broker_confirm', { name }));
   if (!ok) return;
   try {
     await apiFetch(`/brokers/${id}`, { method: 'DELETE' });
@@ -2501,7 +2936,7 @@ async function deleteBroker(id, name) {
       }
     }
 
-    showToast('Broker deleted.');
+    showToast(i18n.t('settings.broker_deleted'));
     loadBrokers();
   } catch (e) {
     showToast(e.message, true);
@@ -2547,7 +2982,7 @@ async function openEditTradeModal(trade) {
   clearError(editTradeError);
   const saveBtn = document.getElementById('btn-save-edit-trade');
   saveBtn.disabled    = false;
-  saveBtn.textContent = 'Save Changes';
+  saveBtn.textContent = i18n.t('common.save_changes');
   editTradeOverlay.classList.remove('hidden');
   await loadBrokerOptions(editBrokerEl);
   editBrokerEl.value = trade.broker_id != null ? String(trade.broker_id) : '';
@@ -2608,26 +3043,26 @@ editTradeForm.addEventListener('submit', async (e) => {
   // always what should be saved — send it explicitly.
   const commission     = parseFloat(editCommission.value) || 0;
 
-  if (!ticker)                            { showError(editTradeError, 'Ticker is required.'); return; }
-  if (isNaN(quantity) || quantity <= 0)   { showError(editTradeError, 'Quantity must be greater than 0.'); return; }
-  if (isNaN(price_per_unit) || price_per_unit < 0) { showError(editTradeError, 'Price must be ≥ 0.'); return; }
-  if (!trade_date)                        { showError(editTradeError, 'Trade date is required.'); return; }
+  if (!ticker)                            { showError(editTradeError, i18n.t('trades.ticker_required')); return; }
+  if (isNaN(quantity) || quantity <= 0)   { showError(editTradeError, i18n.t('trades.quantity_positive')); return; }
+  if (isNaN(price_per_unit) || price_per_unit < 0) { showError(editTradeError, i18n.t('trades.price_nonneg')); return; }
+  if (!trade_date)                        { showError(editTradeError, i18n.t('trades.date_required')); return; }
 
   const btn = document.getElementById('btn-save-edit-trade');
   btn.disabled    = true;
-  btn.textContent = 'Saving…';
+  btn.textContent = i18n.t('common.saving');
   try {
     await apiFetch(`/trades/${editingTradeId}`, {
       method: 'PUT',
       body: JSON.stringify({ ticker, trade_type, action, quantity, price_per_unit, trade_date, notes, broker_id, commission }),
     });
     closeEditTradeModal();
-    showToast('Trade updated.');
+    showToast(i18n.t('trades.updated'));
     loadTrades();
   } catch (e) {
     showError(editTradeError, e.message);
     btn.disabled    = false;
-    btn.textContent = 'Save Changes';
+    btn.textContent = i18n.t('common.save_changes');
   }
 });
 
@@ -2674,7 +3109,7 @@ document.addEventListener('keydown', (e) => {
     case 'n': case 'N':
       e.preventDefault();
       switchTab('add-trade');
-      tradeTicker.focus();
+      instrumentInput.focus();
       break;
     case 's': case 'S':
       e.preventDefault();
@@ -2760,7 +3195,7 @@ async function runSearch(q) {
     renderSearchResults(data, q);
   } catch (e) {
     if (seq !== searchSeq) return;
-    searchResults.innerHTML = `<div class="sr-empty">Search failed: ${escHtml(e.message)}</div>`;
+    searchResults.innerHTML = `<div class="sr-empty">${escHtml(i18n.t('common.search_failed', { error: e.message }))}</div>`;
     searchResults.classList.remove('hidden');
   } finally {
     if (seq === searchSeq) searchSpinner.classList.add('hidden');
@@ -2778,15 +3213,15 @@ function renderSearchResults(data, q) {
   const cash      = cashB.results || [];
 
   if (!trades.length && !positions.length && !cash.length) {
-    searchResults.innerHTML = `<div class="sr-empty">No results for “${escHtml(q)}”</div>`;
+    searchResults.innerHTML = `<div class="sr-empty">${escHtml(i18n.t('search.no_results', { query: q }))}</div>`;
     searchResults.classList.remove('hidden');
     return;
   }
 
   let html = '';
-  if (trades.length)    html += _searchSection('Trades', tradesB, _tradeRow, 'trades');
-  if (positions.length) html += _searchSection('Positions', positionsB, _positionRow, 'positions');
-  if (cash.length)      html += _searchSection('Cash Transactions', cashB, _cashRow, 'cash_transactions');
+  if (trades.length)    html += _searchSection(i18n.t('search.section_trades'), tradesB, _tradeRow, 'trades');
+  if (positions.length) html += _searchSection(i18n.t('search.section_positions'), positionsB, _positionRow, 'positions');
+  if (cash.length)      html += _searchSection(i18n.t('search.section_cash'), cashB, _cashRow, 'cash_transactions');
   searchResults.innerHTML = html;
   searchResults.classList.remove('hidden');
 
@@ -2821,7 +3256,7 @@ function _searchSection(label, bucket, rowFn, kind) {
   let viewAll = '';
   if (items.length > 5 || bucket.has_more) {
     const count = bucket.has_more ? `${items.length}+` : String(items.length);
-    viewAll = `<div class="sr-viewall" data-viewall="${kind}">View all ${count} results</div>`;
+    viewAll = `<div class="sr-viewall" data-viewall="${kind}">${escHtml(i18n.t('search.view_all', { n: count }))}</div>`;
   }
   return `<div class="sr-section"><div class="sr-section-header">${label}</div>${rows}${viewAll}</div>`;
 }
@@ -2829,9 +3264,9 @@ function _searchSection(label, bucket, rowFn, kind) {
 function _tradeRow(t, i) {
   return `<div class="sr-row sr-trade" data-i="${i}">
     <strong>${escHtml(t.ticker)}</strong>
-    ${badge(t.trade_type)}<span class="sr-action">${escHtml(t.action)}</span>
+    ${badge(t.trade_type)}<span class="sr-action">${escHtml(i18n.t('trades.actions.' + t.action))}</span>
     <span class="sr-meta">${formatDate(t.trade_date)}</span>
-    ${badge(t.status)}
+    <span class="badge badge-${t.status}">${escHtml(i18n.t('trades.status.' + t.status))}</span>
   </div>`;
 }
 
@@ -2847,7 +3282,7 @@ function _cashRow(c) {
   const cls  = c.amount >= 0 ? 'pnl-pos' : 'pnl-neg';
   const sign = c.amount > 0 ? '+' : '';
   return `<div class="sr-row sr-cash sr-inert">
-    ${badge(c.transaction_type)}
+    <span class="badge badge-${c.transaction_type.replace(/_/g, '-')}">${escHtml(i18n.t('cash.types.' + c.transaction_type))}</span>
     <span class="${cls}">${sign}${formatCurrency(c.amount)}</span>
     <span class="sr-meta">${escHtml(c.note ?? '')}</span>
     <span class="sr-meta">${formatDate(c.created_at)}</span>
@@ -2865,9 +3300,9 @@ const searchAllLoadmore = document.getElementById('search-all-loadmore');
 
 // Bucket name (matches the API `type` param + response key) -> title + row renderer.
 const SEARCH_ALL = {
-  trades:            { title: 'Trades',            rowFn: _tradeRow    },
-  positions:         { title: 'Positions',         rowFn: _positionRow },
-  cash_transactions: { title: 'Cash transactions', rowFn: _cashRow     },
+  trades:            { titleKey: 'search.section_trades',    rowFn: _tradeRow    },
+  positions:         { titleKey: 'search.section_positions', rowFn: _positionRow },
+  cash_transactions: { titleKey: 'search.section_cash',      rowFn: _cashRow     },
 };
 
 let saKind = null, saQuery = '', saCursor = null, saHasMore = false;
@@ -2876,7 +3311,7 @@ let saItems = [], saLoading = false;
 function openSearchAll(kind, q) {
   if (!SEARCH_ALL[kind] || !activeUserId) return;
   saKind = kind; saQuery = q; saItems = []; saCursor = null; saHasMore = false; saLoading = false;
-  searchAllTitle.textContent = `${SEARCH_ALL[kind].title} matching “${q}”`;
+  searchAllTitle.textContent = i18n.t('search.matching', { title: i18n.t(SEARCH_ALL[kind].titleKey), query: q });
   searchAllList.innerHTML = '';
   searchAllEmpty.classList.add('hidden');
   searchAllError.classList.add('hidden');
@@ -2909,7 +3344,7 @@ function fetchSearchAll(append) {
       updateSearchAllChrome();
     })
     .catch(e => {
-      searchAllError.textContent = 'Search failed: ' + e.message;
+      searchAllError.textContent = i18n.t('common.search_failed', { error: e.message });
       searchAllError.classList.remove('hidden');
       updateSearchAllChrome();
     })
@@ -2953,7 +3388,7 @@ function updateSearchAllChrome() {
   renderListFooter(searchAllLoadmore, {
     loaded: saItems.length, total: saItems.length,
     hasMore: saHasMore, capped: false,
-    pageSize: 20, nounP: 'results',
+    pageSize: 20, nounP: i18n.t('common.nouns.results'),
     onMore: () => fetchSearchAll(true),
   });
 }
@@ -2980,5 +3415,14 @@ document.addEventListener('click', (e) => {
   if (!globalSearch.contains(e.target)) closeSearch();
 });
 
-// Load settings + trade types once on startup, then the user list.
-Promise.all([loadAppSettings(), loadTradeTypes()]).then(loadUsers);
+// Startup: load settings first so we know the configured language, load that
+// locale (English fallback) before rendering any UI, then trade types + users.
+loadAppSettings()
+  .then(() => Promise.all([
+    i18n.load(appSettings.language || 'en'),
+    loadTradeTypes(),
+  ]))
+  .then(() => {
+    i18n.applyToDOM();   // translate any static [data-i18n] markup that's present
+    loadUsers();
+  });
