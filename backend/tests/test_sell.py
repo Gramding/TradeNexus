@@ -47,6 +47,20 @@ def test_sell_adds_proceeds_to_cash(client, user_id):
     assert bal == 500.0
 
 
+def test_sell_cash_credit_nets_commission(client, user_id):
+    bid = client.post("/brokers", json={
+        "name": "BK", "commission_flat": 0, "commission_per_unit": 1,
+    }).json()["id"]
+    # Buy 10 @ 100: commission 1*10 = 10 -> net buy 1010, cash -1010.
+    buy = make_trade(client, user_id, quantity=10, price_per_unit=100, broker_id=bid)
+    # Sell 10 @ 150: proceeds 1500, sell commission 1*10 = 10 -> net credit 1490.
+    client.post(f"/trades/{buy['id']}/sell", json={
+        "quantity_sold": 10, "sell_price_per_unit": 150, "sell_date": "2026-05-10",
+    })
+    bal = client.get(f"/users/{user_id}/cash").json()["balance"]
+    assert bal == -1010 + 1490  # 480
+
+
 def test_delete_buy_with_sells_cascades_and_reverses_cash(client, user_id):
     # Fund the pool, buy, then sell part of the position.
     client.post(f"/users/{user_id}/cash/deposit", json={"amount": 10_000})

@@ -555,10 +555,12 @@ def create_trade(user_id: int, body: TradeCreate):
         trade_id = cur.lastrowid
 
         if body.action == "buy":
+            # Deduct the commission-inclusive net so the cash pool matches what the
+            # broker actually debits (gross cost + commission).
             cur.execute(
                 "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
                 "VALUES (?, 'buy_deduction', ?, ?)",
-                (user_id, -total_value, trade_id),
+                (user_id, -net_total_value, trade_id),
             )
 
         conn.commit()
@@ -623,6 +625,23 @@ def update_trade(trade_id: int, body: TradeUpdate):
             (ticker, trade_type, action, quantity, price_per_unit, total_value, trade_date, notes, broker_id,
              commission, net_total_value, trade_id),
         )
+
+        # Keep the cash pool in sync with the edit: drop this trade's old buy
+        # deduction and, if it is (still) a buy, re-insert one for the new net total.
+        # Sell cash rows are keyed to sell lots rather than the trade, so they are
+        # left untouched here.
+        cur.execute(
+            "DELETE FROM cash_pool WHERE transaction_type = 'buy_deduction' "
+            "AND reference_id = ?",
+            (trade_id,),
+        )
+        if action == "buy":
+            cur.execute(
+                "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
+                "VALUES (?, 'buy_deduction', ?, ?)",
+                (existing[1], -net_total_value, trade_id),
+            )
+
         conn.commit()
         stats_cache.invalidate(existing[1])
         cur.execute(_TRADE_SELECT + " WHERE t.id = ?", (trade_id,))
@@ -774,11 +793,12 @@ def sell_trade(buy_trade_id: int, body: SellLotCreate):
             ),
         )
 
-        # 7. Insert cash_pool row
+        # 7. Insert cash_pool row. Credit the proceeds net of the sell commission,
+        #    matching what the broker actually deposits.
         cur.execute(
             "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
             "VALUES (?, 'sell_proceeds', ?, ?)",
-            (trade[1], proceeds, sell_lot_id),
+            (trade[1], sell_net_total, sell_lot_id),
         )
 
         conn.commit()

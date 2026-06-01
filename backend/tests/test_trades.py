@@ -82,6 +82,29 @@ def test_filter_by_date_range(client, user_id):
     assert body["trades"][0]["ticker"] == "AAA"
 
 
+def test_buy_cash_deduction_includes_commission(client, user_id):
+    # The cash pool must reflect what the broker actually debits: gross + commission.
+    bid = client.post("/brokers", json={
+        "name": "BK", "commission_flat": 5, "commission_per_unit": 1,
+    }).json()["id"]
+    # 10 @ 100 -> gross 1000, commission 5 + 1*10 = 15, net 1015
+    make_trade(client, user_id, quantity=10, price_per_unit=100, broker_id=bid)
+    assert client.get(f"/users/{user_id}/cash").json()["balance"] == -1015.0
+
+
+def test_edit_buy_resyncs_cash(client, user_id):
+    buy = make_trade(client, user_id, quantity=10, price_per_unit=100)  # cash -1000
+    assert client.get(f"/users/{user_id}/cash").json()["balance"] == -1000
+
+    # Raising the quantity replaces (not duplicates) the deduction: 25 @ 100 = 2500.
+    client.put(f"/trades/{buy['id']}", json={"quantity": 25})
+    assert client.get(f"/users/{user_id}/cash").json()["balance"] == -2500
+
+    # Lowering the price re-syncs again: 25 @ 80 = 2000.
+    client.put(f"/trades/{buy['id']}", json={"price_per_unit": 80})
+    assert client.get(f"/users/{user_id}/cash").json()["balance"] == -2000
+
+
 def test_invalid_date_filter_rejected(client, user_id):
     assert client.get(f"/users/{user_id}/trades",
                       params={"date_from": "06/15/2024"}).status_code == 400
