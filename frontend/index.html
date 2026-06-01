@@ -440,6 +440,25 @@
                 <label for="broker-notes-input" data-i18n="settings.broker_notes">Notes</label>
                 <textarea id="broker-notes-input" rows="2" data-i18n-placeholder="settings.broker_notes_placeholder" placeholder="Optional description…"></textarea>
               </div>
+              <div class="field-group">
+                <div class="field">
+                  <label for="broker-quote-template-input" data-i18n="settings.broker_quote_template">Quote URL template</label>
+                  <input id="broker-quote-template-input" type="text" data-i18n-placeholder="settings.broker_quote_template_placeholder" placeholder="https://example.com/stocks/{value}" autocomplete="off" spellcheck="false" />
+                  <div class="field-help" data-i18n="settings.broker_quote_template_help">Use {value} as the placeholder. Leave empty to use Yahoo Finance.</div>
+                </div>
+                <div class="field">
+                  <label for="broker-quote-key-input" data-i18n="settings.broker_quote_key">Identifier to use</label>
+                  <select id="broker-quote-key-input">
+                    <option value="symbol" data-i18n="settings.broker_quote_key_symbol">Symbol (e.g. VOD.L)</option>
+                    <option value="ticker" data-i18n="settings.broker_quote_key_ticker">Ticker (e.g. VOD)</option>
+                    <option value="isin" data-i18n="settings.broker_quote_key_isin">ISIN (e.g. GB00BH4HKS39)</option>
+                  </select>
+                </div>
+              </div>
+              <div id="broker-quote-preview-row" class="broker-quote-preview-row hidden">
+                <span id="broker-quote-preview" class="broker-quote-preview"></span>
+                <button type="button" id="btn-test-quote-link" class="secondary" data-i18n="settings.broker_quote_test">Test link</button>
+              </div>
               <div id="broker-form-error" class="inline-error hidden"></div>
               <div class="form-row">
                 <button type="submit" id="btn-save-broker" data-i18n="settings.save_broker">Save Broker</button>

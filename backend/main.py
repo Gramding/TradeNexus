@@ -19,6 +19,7 @@ from init_db import ensure_initialized
 import brokers as brokers_module
 import instruments as instruments_module
 import prices as prices_module
+import quote_links as quote_links_module
 import settings as settings_module
 import stats_cache
 import trade_types as trade_types_module
@@ -42,6 +43,7 @@ app = FastAPI(title="TradeNexus")
 app.include_router(brokers_module.router)
 app.include_router(instruments_module.router)
 app.include_router(prices_module.router)
+app.include_router(quote_links_module.router)
 app.include_router(settings_module.router)
 app.include_router(trade_types_module.router)
 

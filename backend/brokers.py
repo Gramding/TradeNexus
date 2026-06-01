@@ -6,6 +6,9 @@ from typing import Optional
 
 _HEX_COLOR = re.compile(r'^#[0-9a-fA-F]{6}$')
 
+# Which instrument identifier fills the {value} placeholder in quote_url_template.
+_QUOTE_URL_KEYS = ("symbol", "ticker", "isin")
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -30,11 +33,12 @@ def _db() -> sqlite3.Connection:
 def _require_broker(cur: sqlite3.Cursor, broker_id: int) -> tuple:
     # Columns: 0=id 1=name 2=price_source 3=color
     #          4=commission_flat 5=commission_per_unit 6=commission_currency
-    #          7=notes 8=created_at
+    #          7=notes 8=created_at 9=quote_url_template 10=quote_url_key
     cur.execute(
         "SELECT id, name, price_source, color, "
         "commission_flat, commission_per_unit, commission_currency, "
-        "notes, created_at FROM brokers WHERE id = ?",
+        "notes, created_at, quote_url_template, quote_url_key "
+        "FROM brokers WHERE id = ?",
         (broker_id,),
     )
     row = cur.fetchone()
@@ -54,7 +58,37 @@ def _row_to_broker(r) -> dict:
         "commission_currency":  r[6] or "USD",
         "notes":                r[7],
         "created_at":           r[8],
+        "quote_url_template":   r[9],
+        "quote_url_key":        r[10] or "symbol",
     }
+
+
+def _validate_quote_url_key(key: Optional[str]) -> Optional[str]:
+    """Validate quote_url_key against the allowed instrument identifiers."""
+    if key is None:
+        return None
+    if key not in _QUOTE_URL_KEYS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"quote_url_key must be one of: {', '.join(_QUOTE_URL_KEYS)}.",
+        )
+    return key
+
+
+def _validate_quote_url_template(template: Optional[str]) -> Optional[str]:
+    """Normalize the template: None/blank -> None (no link); otherwise it must
+    carry the {value} placeholder the backend substitutes."""
+    if template is None:
+        return None
+    template = template.strip()
+    if not template:
+        return None
+    if "{value}" not in template:
+        raise HTTPException(
+            status_code=422,
+            detail="quote_url_template must contain the '{value}' placeholder.",
+        )
+    return template
 
 
 def _validate_color(color: Optional[str]) -> Optional[str]:
@@ -78,6 +112,8 @@ class BrokerCreate(BaseModel):
     commission_currency: str = "USD"
     notes: Optional[str] = None
     config: Optional[dict] = None
+    quote_url_template: Optional[str] = None
+    quote_url_key: Optional[str] = None  # defaults to 'symbol' when omitted
 
 
 class BrokerUpdate(BaseModel):
@@ -89,6 +125,8 @@ class BrokerUpdate(BaseModel):
     commission_currency: Optional[str] = None
     notes: Optional[str] = None
     config: Optional[dict] = None
+    quote_url_template: Optional[str] = None
+    quote_url_key: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +141,8 @@ def list_brokers():
         cur.execute(
             "SELECT id, name, price_source, color, "
             "commission_flat, commission_per_unit, commission_currency, "
-            "notes, created_at FROM brokers ORDER BY name"
+            "notes, created_at, quote_url_template, quote_url_key "
+            "FROM brokers ORDER BY name"
         )
         rows = cur.fetchall()
     except sqlite3.Error as exc:
@@ -127,17 +166,20 @@ def create_broker(body: BrokerCreate):
 
     color      = _validate_color(body.color)
     config_str = json.dumps(body.config) if body.config is not None else None
+    quote_url_template = _validate_quote_url_template(body.quote_url_template)
+    quote_url_key      = _validate_quote_url_key(body.quote_url_key) or "symbol"
 
     conn = _db()
     try:
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO brokers "
-            "(name, price_source, color, commission_flat, commission_per_unit, commission_currency, config, notes) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(name, price_source, color, commission_flat, commission_per_unit, commission_currency, "
+            "config, notes, quote_url_template, quote_url_key) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (body.name.strip(), body.price_source.strip(), color,
              body.commission_flat, body.commission_per_unit, body.commission_currency,
-             config_str, body.notes),
+             config_str, body.notes, quote_url_template, quote_url_key),
         )
         conn.commit()
         row = _require_broker(cur, cur.lastrowid)
@@ -174,10 +216,11 @@ def update_broker(broker_id: int, body: BrokerUpdate):
         cur = conn.cursor()
         # Columns: 0=id 1=name 2=price_source 3=color
         #          4=commission_flat 5=commission_per_unit 6=commission_currency
-        #          7=config 8=notes
+        #          7=config 8=notes 9=quote_url_template 10=quote_url_key
         cur.execute(
             "SELECT id, name, price_source, color, "
-            "commission_flat, commission_per_unit, commission_currency, config, notes "
+            "commission_flat, commission_per_unit, commission_currency, config, notes, "
+            "quote_url_template, quote_url_key "
             "FROM brokers WHERE id = ?",
             (broker_id,),
         )
@@ -193,14 +236,17 @@ def update_broker(broker_id: int, body: BrokerUpdate):
         commission_currency = body.commission_currency if body.commission_currency is not None else (existing[6] or "USD")
         config_str          = json.dumps(body.config)  if body.config              is not None else existing[7]
         notes               = body.notes               if body.notes               is not None else existing[8]
+        # Passing "" clears the template (no link); omitting it keeps the current value.
+        quote_url_template  = _validate_quote_url_template(body.quote_url_template) if body.quote_url_template is not None else existing[9]
+        quote_url_key       = _validate_quote_url_key(body.quote_url_key)           if body.quote_url_key      is not None else (existing[10] or "symbol")
 
         cur.execute(
             "UPDATE brokers SET name=?, price_source=?, color=?, "
             "commission_flat=?, commission_per_unit=?, commission_currency=?, "
-            "config=?, notes=? WHERE id=?",
+            "config=?, notes=?, quote_url_template=?, quote_url_key=? WHERE id=?",
             (name, price_source, color,
              commission_flat, commission_per_unit, commission_currency,
-             config_str, notes, broker_id),
+             config_str, notes, quote_url_template, quote_url_key, broker_id),
         )
         conn.commit()
         row = _require_broker(cur, broker_id)

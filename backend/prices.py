@@ -134,7 +134,7 @@ def get_positions_with_prices(
         cur.execute(
             "SELECT t.id, t.ticker, t.trade_type, t.trade_date, t.remaining_quantity, "
             "t.price_per_unit, t.status, t.broker_id, b.color, t.quantity, t.commission, "
-            "i.symbol, i.name, i.exchange, i.asset_class "
+            "i.symbol, i.name, i.exchange, i.asset_class, i.id "
             "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
             "LEFT JOIN instruments i ON t.instrument_id = i.id "
             "WHERE t.user_id = ? AND t.action = 'buy' AND t.status IN ('open', 'partial') "
@@ -147,7 +147,7 @@ def get_positions_with_prices(
         groups: dict[tuple, dict] = {}
         for (trade_id, ticker, trade_type, trade_date, remaining_qty, price_per_unit,
              status, broker_id, broker_color, orig_quantity, buy_commission,
-             instr_symbol, instr_name, instr_exchange, instr_asset_class) in rows:
+             instr_symbol, instr_name, instr_exchange, instr_asset_class, instr_id) in rows:
             remaining_qty  = float(remaining_qty)
             price_per_unit = float(price_per_unit)
             key = (ticker, trade_type)
@@ -155,6 +155,7 @@ def get_positions_with_prices(
                 groups[key] = {
                     "ticker":                   ticker,
                     "symbol":                   instr_symbol,  # first non-null wins below
+                    "instrument_id":            instr_id,
                     "name":                     instr_name,
                     "exchange":                 instr_exchange,
                     "asset_class":              instr_asset_class,
@@ -162,14 +163,15 @@ def get_positions_with_prices(
                     "total_remaining_quantity": 0.0,
                     "total_cost_basis":         0.0,
                     "lots":                     [],
-                    "broker_qty":               {},  # broker_id -> {color, qty}
+                    "broker_qty":               {},  # broker_id -> {broker_id, color, qty}
                 }
             # Keep the first instrument fields seen for this ticker group.
             if groups[key]["symbol"] is None and instr_symbol is not None:
-                groups[key]["symbol"]      = instr_symbol
-                groups[key]["name"]        = instr_name
-                groups[key]["exchange"]    = instr_exchange
-                groups[key]["asset_class"] = instr_asset_class
+                groups[key]["symbol"]        = instr_symbol
+                groups[key]["instrument_id"] = instr_id
+                groups[key]["name"]          = instr_name
+                groups[key]["exchange"]      = instr_exchange
+                groups[key]["asset_class"]   = instr_asset_class
             g = groups[key]
             g["total_remaining_quantity"] += remaining_qty
             g["total_cost_basis"]         += remaining_qty * price_per_unit
@@ -184,10 +186,12 @@ def get_positions_with_prices(
                 "quantity":          float(orig_quantity),
                 "commission":        float(buy_commission or 0),
             })
-            if broker_id and broker_color:
+            # Track quantity per broker for the dominant-broker pick below. Done for
+            # any broker (color may be null); the color just rides along for styling.
+            if broker_id:
                 bq = g["broker_qty"]
                 if broker_id not in bq:
-                    bq[broker_id] = {"color": broker_color, "qty": 0.0}
+                    bq[broker_id] = {"broker_id": broker_id, "color": broker_color, "qty": 0.0}
                 bq[broker_id]["qty"] += remaining_qty
 
         positions = []
@@ -199,6 +203,7 @@ def get_positions_with_prices(
             # Dominant broker = the one with the most remaining quantity in this position
             dominant = max(g["broker_qty"].values(), key=lambda x: x["qty"]) if g["broker_qty"] else None
             broker_color = dominant["color"] if dominant else None
+            broker_id    = dominant["broker_id"] if dominant else None
 
             # Fetch by Yahoo symbol; fall back to the display ticker for positions
             # whose trades aren't linked to an instrument yet.
@@ -224,6 +229,8 @@ def get_positions_with_prices(
             positions.append({
                 "ticker":                   g["ticker"],
                 "symbol":                   g["symbol"] or g["ticker"],
+                "instrument_id":            g["instrument_id"],
+                "broker_id":                broker_id,
                 "name":                     g["name"],
                 "exchange":                 g["exchange"],
                 "asset_class":              g["asset_class"],

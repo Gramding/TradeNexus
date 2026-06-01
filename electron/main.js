@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, Menu, ipcMain, shell } = require('electron');
 const { spawn } = require('child_process');
 const http  = require('http');
 const path  = require('path');
@@ -93,6 +93,15 @@ function createWindow() {
 
 ipcMain.on('set-zoom', (event, factor) => {
   event.sender.setZoomFactor(Math.max(0.5, Math.min(3.0, Number(factor))));
+});
+
+// Open external links in the user's default browser. The renderer asks via IPC
+// because `shell` is unavailable in a sandboxed preload — the main process is the
+// only place it lives. https-only is enforced here (the real trust boundary).
+ipcMain.on('open-external', (_event, url) => {
+  if (typeof url === 'string' && url.startsWith('https://')) {
+    shell.openExternal(url);
+  }
 });
 
 app.whenReady().then(async () => {

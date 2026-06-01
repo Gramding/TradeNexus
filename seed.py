@@ -207,26 +207,33 @@ BROKERS = [
         "name": "Interactive Brokers",
         "notes": "Full-service broker with wide instrument coverage",
         "flat": 0.0, "options_per_contract": 0.65, "stock_per_share": 0.005,
+        # IBKR keys instruments by internal contract IDs, so there is no reliable
+        # ticker-based deep link.
+        "quote_url_template": None, "quote_url_key": "symbol",
     },
     {
         "name": "Robinhood",
         "notes": "Commission-free retail trading app",
         "flat": 0.0, "options_per_contract": 0.0, "stock_per_share": 0.0,
+        "quote_url_template": "https://robinhood.com/stocks/{value}", "quote_url_key": "ticker",
     },
     {
         "name": "TD Ameritrade",
         "notes": "Acquired by Schwab; thinkorswim platform",
         "flat": 0.0, "options_per_contract": 0.65, "stock_per_share": 0.0,
+        "quote_url_template": "https://research.tdameritrade.com/grid/public/research/stocks/summary?symbol={value}", "quote_url_key": "ticker",
     },
     {
         "name": "Fidelity",
         "notes": "Full-service broker with strong research tools",
         "flat": 0.0, "options_per_contract": 0.65, "stock_per_share": 0.0,
+        "quote_url_template": "https://research2.fidelity.com/fidelity/research/snapshot/snapshot.asp?symbol={value}", "quote_url_key": "ticker",
     },
     {
         "name": "Charles Schwab",
         "notes": "Large retail and institutional broker",
         "flat": 0.0, "options_per_contract": 0.65, "stock_per_share": 0.0,
+        "quote_url_template": "https://www.schwab.com/research/stocks/quotes/summary/{value}", "quote_url_key": "ticker",
     },
 ]
 
@@ -267,9 +274,11 @@ def seed_brokers(conn) -> dict[int, dict]:
     cfg_by_id: dict[int, dict] = {}
     for cfg in BROKERS:
         cur.execute(
-            "INSERT INTO brokers (name, price_source, notes, commission_flat, commission_per_unit) "
-            "VALUES (?, 'yahoo_finance', ?, ?, ?)",
-            (cfg["name"], cfg["notes"], cfg["flat"], cfg["options_per_contract"]),
+            "INSERT INTO brokers (name, price_source, notes, commission_flat, commission_per_unit, "
+            "quote_url_template, quote_url_key) "
+            "VALUES (?, 'yahoo_finance', ?, ?, ?, ?, ?)",
+            (cfg["name"], cfg["notes"], cfg["flat"], cfg["options_per_contract"],
+             cfg["quote_url_template"], cfg["quote_url_key"]),
         )
         cfg_by_id[cur.lastrowid] = cfg
     conn.commit()

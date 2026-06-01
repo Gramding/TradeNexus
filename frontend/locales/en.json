@@ -8,6 +8,10 @@
     "cash": "Cash",
     "settings": "Settings"
   },
+  "quote": {
+    "open_default": "Open quote",
+    "failed": "Couldn't open quote link: {error}"
+  },
   "app": {
     "select_user": "Select a user to view their trades.",
     "add_user": "Add user",
@@ -257,6 +261,16 @@
     "broker_per_unit_fee": "Per share/contract fee ($)",
     "broker_notes": "Notes",
     "broker_notes_placeholder": "Optional description…",
+    "broker_quote_template": "Quote URL template",
+    "broker_quote_template_placeholder": "https://example.com/stocks/{value}",
+    "broker_quote_template_help": "Use {value} as the placeholder. Leave empty to use Yahoo Finance.",
+    "broker_quote_key": "Identifier to use",
+    "broker_quote_key_symbol": "Symbol (e.g. VOD.L)",
+    "broker_quote_key_ticker": "Ticker (e.g. VOD)",
+    "broker_quote_key_isin": "ISIN (e.g. GB00BH4HKS39)",
+    "broker_quote_preview": "Preview: {url}",
+    "broker_quote_test": "Test link",
+    "broker_quote_test_https": "Preview must be an https:// URL",
     "save_broker": "Save Broker",
     "broker_col_name": "Name",
     "broker_col_source": "Price Source",

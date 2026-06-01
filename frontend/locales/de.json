@@ -8,6 +8,10 @@
     "cash": "Barmittel",
     "settings": "Einstellungen"
   },
+  "quote": {
+    "open_default": "Kurs öffnen",
+    "failed": "Kurs-Link konnte nicht geöffnet werden: {error}"
+  },
   "app": {
     "select_user": "Wählen Sie einen Benutzer, um dessen Handel anzuzeigen.",
     "add_user": "Benutzer hinzufügen",
@@ -257,6 +261,16 @@
     "broker_per_unit_fee": "Gebühr pro Aktie/Kontrakt ($)",
     "broker_notes": "Notizen",
     "broker_notes_placeholder": "Optionale Beschreibung…",
+    "broker_quote_template": "Kurs-URL-Vorlage",
+    "broker_quote_template_placeholder": "https://example.com/stocks/{value}",
+    "broker_quote_template_help": "Verwenden Sie {value} als Platzhalter. Leer lassen, um Yahoo Finance zu nutzen.",
+    "broker_quote_key": "Zu verwendende Kennung",
+    "broker_quote_key_symbol": "Symbol (z. B. VOD.L)",
+    "broker_quote_key_ticker": "Tickersymbol (z. B. VOD)",
+    "broker_quote_key_isin": "ISIN (z. B. GB00BH4HKS39)",
+    "broker_quote_preview": "Vorschau: {url}",
+    "broker_quote_test": "Link testen",
+    "broker_quote_test_https": "Vorschau muss eine https://-URL sein",
     "save_broker": "Makler speichern",
     "broker_col_name": "Name",
     "broker_col_source": "Preisquelle",

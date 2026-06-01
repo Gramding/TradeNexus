@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS brokers (
     commission_currency TEXT     NOT NULL DEFAULT 'USD',
     config              TEXT,
     notes               TEXT,
+    quote_url_template  TEXT,                            -- URL with a single {value} placeholder, e.g. "https://robinhood.com/stocks/{value}"
+    quote_url_key       TEXT     DEFAULT 'symbol',       -- which instrument id fills {value}: 'symbol' | 'ticker' | 'isin'
     created_at          TEXT     NOT NULL DEFAULT (datetime('now'))
 );
 

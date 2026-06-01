@@ -271,6 +271,12 @@ def _migrate(conn):
     if "commission_currency" not in broker_cols:
         cur.execute("ALTER TABLE brokers ADD COLUMN commission_currency TEXT NOT NULL DEFAULT 'USD'")
         print("Migration: added brokers.commission_currency")
+    if "quote_url_template" not in broker_cols:
+        cur.execute("ALTER TABLE brokers ADD COLUMN quote_url_template TEXT")
+        print("Migration: added brokers.quote_url_template")
+    if "quote_url_key" not in broker_cols:
+        cur.execute("ALTER TABLE brokers ADD COLUMN quote_url_key TEXT DEFAULT 'symbol'")
+        print("Migration: added brokers.quote_url_key")
 
     cur.execute("PRAGMA table_info(trades)")
     columns = {row[1] for row in cur.fetchall()}
