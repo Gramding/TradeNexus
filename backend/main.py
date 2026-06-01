@@ -1116,10 +1116,12 @@ def _search_trades_bucket(cur, user_id, like, cursor) -> dict:
 
 
 def _search_positions_bucket(cur, user_id, like, cursor) -> dict:
-    """Open/partial buy lots whose ticker matches, grouped by ticker (A-Z).
+    """Open/partial buy lots whose ticker matches, grouped by (ticker, trade_type).
 
-    Positions are aggregates with no row id, so the keyset runs on ticker alone;
-    the cursor stores the last ticker in last_val (last_id is unused, set to 0)."""
+    Mirrors the grouping of get_positions: the same ticker held under two trade
+    types is two distinct positions, not one merged row. Positions are aggregates
+    with no row id, so the keyset runs on the (ticker, trade_type) tuple, stored
+    in the cursor's last_val as a [ticker, trade_type] pair (last_id is unused)."""
     sql = (
         "SELECT ticker, trade_type, "
         "SUM(remaining_quantity) AS rem, "
@@ -1131,9 +1133,10 @@ def _search_positions_bucket(cur, user_id, like, cursor) -> dict:
     params = [user_id, like]
     if cursor is not None:
         last_val, _ = _decode_cursor(cursor)
-        sql += " AND ticker > ?"
-        params.append(last_val)
-    sql += " GROUP BY ticker ORDER BY ticker ASC LIMIT ?"
+        last_ticker, last_type = last_val
+        sql += " AND (ticker, trade_type) > (?, ?)"
+        params.extend([last_ticker, last_type])
+    sql += " GROUP BY ticker, trade_type ORDER BY ticker ASC, trade_type ASC LIMIT ?"
     params.append(_SEARCH_LIMIT + 1)
 
     cur.execute(sql, params)
@@ -1152,7 +1155,8 @@ def _search_positions_bucket(cur, user_id, like, cursor) -> dict:
             "total_cost_basis":         round(basis, 10),
         })
     next_cursor = (
-        _encode_cursor(results[-1]["ticker"], 0) if has_more and results else None
+        _encode_cursor([results[-1]["ticker"], results[-1]["trade_type"]], 0)
+        if has_more and results else None
     )
     return _bucket(results, has_more, next_cursor)
 
