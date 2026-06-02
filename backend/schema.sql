@@ -56,6 +56,11 @@ CREATE TABLE IF NOT EXISTS trades (
     underlying         TEXT,
     trade_currency     TEXT     NOT NULL DEFAULT 'USD',
     fx_rate            REAL     NOT NULL DEFAULT 1 CHECK (fx_rate > 0),
+    face_value         REAL,                  -- bonds: par per unit (e.g. 1000)
+    coupon_rate        REAL,                  -- bonds: annual coupon rate, %
+    coupon_frequency   INTEGER,               -- bonds: payments per year (1, 2, 4, 12)
+    maturity_date      TEXT,                  -- bonds: ISO date
+    accrued_interest   REAL,                  -- bonds: accrued at purchase, in trade_currency
     created_at         TEXT     NOT NULL DEFAULT (datetime('now'))
 );
 

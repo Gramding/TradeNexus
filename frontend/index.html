@@ -218,6 +218,40 @@
               </div>
             </div>
 
+            <!-- Bond details: shown when trade_type is Bond. Price here is per
+                 par (e.g. 98.5 = $985 on a $1000 face), so the multiplier is
+                 face_value/100 — set silently by the backend / total preview. -->
+            <div id="bond-fields" class="field-group hidden">
+              <div class="field">
+                <label for="trade-face-value" data-i18n="trade_form.face_value">Face value</label>
+                <input id="trade-face-value" type="number" min="0.0001" step="any" placeholder="1000" />
+                <p class="field-hint" data-i18n="trade_form.face_value_hint">Par per bond. Most US corporate / treasury bonds are 1000.</p>
+              </div>
+              <div class="field">
+                <label for="trade-coupon-rate" data-i18n="trade_form.coupon_rate">Coupon rate (%)</label>
+                <input id="trade-coupon-rate" type="number" min="0" step="any" placeholder="0.00" />
+              </div>
+              <div class="field">
+                <label for="trade-coupon-frequency" data-i18n="trade_form.coupon_frequency">Coupon frequency</label>
+                <select id="trade-coupon-frequency">
+                  <option value=""></option>
+                  <option value="1" data-i18n="trade_form.freq_annual">Annual (1)</option>
+                  <option value="2" data-i18n="trade_form.freq_semiannual">Semiannual (2)</option>
+                  <option value="4" data-i18n="trade_form.freq_quarterly">Quarterly (4)</option>
+                  <option value="12" data-i18n="trade_form.freq_monthly">Monthly (12)</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="trade-maturity" data-i18n="trade_form.maturity">Maturity</label>
+                <input id="trade-maturity" type="date" />
+              </div>
+              <div class="field">
+                <label for="trade-accrued" data-i18n="trade_form.accrued_interest">Accrued interest at purchase</label>
+                <input id="trade-accrued" type="number" min="0" step="any" placeholder="0.00" />
+                <p class="field-hint" data-i18n="trade_form.accrued_hint">Bundled into the cash debit, not cost basis.</p>
+              </div>
+            </div>
+
             <div id="price-autofill-hint" class="price-autofill-hint hidden"></div>
 
             <div id="cash-warning" class="cash-warning hidden"></div>

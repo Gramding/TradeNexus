@@ -122,6 +122,7 @@ def _validate_iso_date(value, field: str):
 #          18=instr_symbol 19=instr_name 20=instr_exchange 21=instr_asset_class 22=instr_currency
 #          23=multiplier 24=strike_price 25=expiration_date 26=underlying 27=direction
 #          28=trade_currency 29=fx_rate
+#          30=face_value 31=coupon_rate 32=coupon_frequency 33=maturity_date 34=accrued_interest
 _TRADE_SELECT = (
     "SELECT t.id, t.user_id, t.ticker, t.trade_type, t.action, t.quantity, "
     "t.price_per_unit, t.total_value, t.trade_date, t.notes, t.created_at, "
@@ -129,7 +130,8 @@ _TRADE_SELECT = (
     "t.commission, t.net_total_value, "
     "i.symbol, i.name, i.exchange, i.asset_class, i.currency, "
     "t.multiplier, t.strike_price, t.expiration_date, t.underlying, t.direction, "
-    "t.trade_currency, t.fx_rate "
+    "t.trade_currency, t.fx_rate, "
+    "t.face_value, t.coupon_rate, t.coupon_frequency, t.maturity_date, t.accrued_interest "
     "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
     "LEFT JOIN instruments i ON t.instrument_id = i.id"
 )
@@ -208,6 +210,11 @@ def _row_to_trade(r) -> dict:
         "direction":          r[27] or "long",
         "trade_currency":     r[28] or "USD",
         "fx_rate":            float(r[29]) if r[29] is not None else 1.0,
+        "face_value":         float(r[30]) if r[30] is not None else None,
+        "coupon_rate":        float(r[31]) if r[31] is not None else None,
+        "coupon_frequency":   int(r[32])   if r[32] is not None else None,
+        "maturity_date":      r[33],
+        "accrued_interest":   float(r[34]) if r[34] is not None else 0.0,
     }
 
 
@@ -239,6 +246,10 @@ def _net_total(action: str, total_value: float, commission: float) -> float:
 # 100 shares, i.e. $250 of notional). Anything else defaults to a 1x multiplier.
 OPTION_TRADE_TYPES = {"Call", "Put"}
 DEFAULT_OPTION_MULTIPLIER = 100.0
+BOND_TRADE_TYPES = {"Bond"}
+# Standard US corporate / treasury bond face: prices are quoted as % of par, so
+# a multiplier of face_value/100 converts a "98.5" quote into $985 per bond.
+DEFAULT_BOND_FACE_VALUE = 1000.0
 
 
 def _base_currency(cur: sqlite3.Cursor) -> str:
@@ -280,10 +291,26 @@ def _resolve_fx(conn, cur: sqlite3.Cursor, trade_currency: str, override) -> flo
     return round(rate, 10)
 
 
-def _resolve_multiplier(trade_type: str, override) -> float:
+def _resolve_face_value(trade_type: str, override) -> Optional[float]:
+    """Face/par value for a bond lot: explicit override if given (>0), else 1000
+    for Bond and None for everything else. Used only by bonds; the multiplier
+    derives from face_value/100 so a 98.5 quote prices a $1000 bond at $985."""
+    if override is not None:
+        try:
+            fv = float(override)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="face_value must be a number.")
+        if fv <= 0:
+            raise HTTPException(status_code=422, detail="face_value must be greater than 0.")
+        return round(fv, 10)
+    return DEFAULT_BOND_FACE_VALUE if trade_type in BOND_TRADE_TYPES else None
+
+
+def _resolve_multiplier(trade_type: str, override, face_value: Optional[float] = None) -> float:
     """The contract multiplier for a trade: an explicit override if given (must be
-    > 0), else 100 for Call/Put and 1 for everything else. The canonical trade_type
-    (from _normalize_trade_type) is expected here so the Call/Put match is exact."""
+    > 0); else 100 for Call/Put; else face_value/100 for a Bond (so a per-par
+    quote becomes a dollar amount); else 1. The canonical trade_type (from
+    _normalize_trade_type) is expected so the Call/Put/Bond match is exact."""
     if override is not None:
         try:
             m = float(override)
@@ -292,7 +319,11 @@ def _resolve_multiplier(trade_type: str, override) -> float:
         if m <= 0:
             raise HTTPException(status_code=422, detail="multiplier must be greater than 0.")
         return round(m, 10)
-    return DEFAULT_OPTION_MULTIPLIER if trade_type in OPTION_TRADE_TYPES else 1.0
+    if trade_type in OPTION_TRADE_TYPES:
+        return DEFAULT_OPTION_MULTIPLIER
+    if trade_type in BOND_TRADE_TYPES and face_value is not None:
+        return round(face_value / 100.0, 10)
+    return 1.0
 
 
 def _row_to_sell_lot(r) -> dict:
@@ -320,12 +351,12 @@ def _require_trade(cur: sqlite3.Cursor, trade_id: int) -> tuple:
     #          6=price_per_unit 7=total_value 8=trade_date 9=notes 10=created_at
     #          11=status 12=remaining_quantity 13=broker_id 14=commission 15=multiplier
     #          16=strike_price 17=expiration_date 18=underlying 19=direction
-    #          20=trade_currency 21=fx_rate
+    #          20=trade_currency 21=fx_rate 22=accrued_interest
     cur.execute(
         "SELECT id, user_id, ticker, trade_type, action, quantity, price_per_unit, "
         "total_value, trade_date, notes, created_at, status, remaining_quantity, broker_id, "
         "commission, multiplier, strike_price, expiration_date, underlying, direction, "
-        "trade_currency, fx_rate "
+        "trade_currency, fx_rate, accrued_interest "
         "FROM trades WHERE id = ?",
         (trade_id,),
     )
@@ -374,6 +405,11 @@ class TradeCreate(BaseModel):
     direction: Optional[str] = None      # long (buy-to-open) or short (sell-to-open); inferred from action if omitted
     trade_currency: Optional[str] = None  # native currency; defaults to the instrument's, else base
     fx_rate: Optional[float] = None       # trade_currency -> base; None = auto fetch
+    face_value: Optional[float] = None        # bonds: par per bond (default 1000 for Bond)
+    coupon_rate: Optional[float] = None       # bonds: annual coupon rate, %
+    coupon_frequency: Optional[int] = None    # bonds: payments per year (1, 2, 4, 12)
+    maturity_date: Optional[datetime.date] = None  # bonds: maturity date
+    accrued_interest: Optional[float] = None  # bonds: accrued paid at purchase, in trade_currency
 
 
 class TradeUpdate(BaseModel):
@@ -391,6 +427,11 @@ class TradeUpdate(BaseModel):
     expiration_date: Optional[datetime.date] = None
     underlying: Optional[str] = None
     fx_rate: Optional[float] = None
+    face_value: Optional[float] = None
+    coupon_rate: Optional[float] = None
+    coupon_frequency: Optional[int] = None
+    maturity_date: Optional[datetime.date] = None
+    accrued_interest: Optional[float] = None
 
 
 class SellLotCreate(BaseModel):
@@ -658,12 +699,18 @@ def create_trade(user_id: int, body: TradeCreate):
             instr_currency = row[0] if row else None
 
         # total_value is the full notional: per-unit price × quantity × contract
-        # multiplier (100 for an equity option, 1 for a share). Every downstream
-        # value (net_total_value, cash deduction, stats volume) derives from this.
-        multiplier  = _resolve_multiplier(trade_type, body.multiplier)
+        # multiplier (100 for an equity option, face_value/100 for a bond, 1 for
+        # a share). Every downstream value (net_total_value, cash deduction, stats
+        # volume) derives from this.
+        face_value  = _resolve_face_value(trade_type, body.face_value)
+        multiplier  = _resolve_multiplier(trade_type, body.multiplier, face_value)
         total_value = round(body.quantity * body.price_per_unit * multiplier, 10)
         expiration  = body.expiration_date.isoformat() if body.expiration_date is not None else None
         underlying  = body.underlying.strip().upper() if body.underlying else None
+        maturity    = body.maturity_date.isoformat() if body.maturity_date is not None else None
+        accrued     = round(float(body.accrued_interest), 10) if body.accrued_interest else 0.0
+        if accrued < 0:
+            raise HTTPException(status_code=422, detail="accrued_interest must be >= 0.")
 
         # Native currency: explicit > the instrument's > the base currency. fx_rate
         # converts the native amounts into base; the cash pool is kept in base.
@@ -672,14 +719,20 @@ def create_trade(user_id: int, body: TradeCreate):
 
         commission      = _compute_commission(cur, body.broker_id, body.quantity, body.commission)
         net_total_value = _net_total(body.action, total_value, commission)
-        net_total_base  = round(net_total_value * fx_rate, 10)
+        # Bonds: the buyer pays accrued interest on top of the clean price; the
+        # seller receives it. Bundled into the cash flow so the broker's debit
+        # matches reality, but kept out of total_value/cost basis so realized P&L
+        # reflects principal gain/loss only.
+        cash_native     = net_total_value + (accrued if body.action == "buy" else -accrued)
+        net_total_base  = round(cash_native * fx_rate, 10)
 
         cur.execute(
             "INSERT INTO trades "
             "(user_id, broker_id, instrument_id, ticker, trade_type, action, quantity, price_per_unit, "
             "total_value, trade_date, notes, remaining_quantity, commission, net_total_value, "
-            "multiplier, strike_price, expiration_date, underlying, direction, trade_currency, fx_rate) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "multiplier, strike_price, expiration_date, underlying, direction, trade_currency, fx_rate, "
+            "face_value, coupon_rate, coupon_frequency, maturity_date, accrued_interest) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user_id, body.broker_id, body.instrument_id, body.ticker.strip().upper(),
                 trade_type, body.action, body.quantity, body.price_per_unit, total_value,
@@ -687,13 +740,15 @@ def create_trade(user_id: int, body: TradeCreate):
                 commission, net_total_value,
                 multiplier, body.strike_price, expiration, underlying, direction,
                 trade_currency, fx_rate,
+                face_value, body.coupon_rate, body.coupon_frequency, maturity, accrued,
             ),
         )
         trade_id = cur.lastrowid
 
         if body.action == "buy":
             # Long open: deduct the commission-inclusive net (in base currency) so the
-            # cash pool matches what the broker actually debits (gross cost + commission).
+            # cash pool matches what the broker actually debits (gross cost + commission
+            # + bond accrued interest).
             cur.execute(
                 "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
                 "VALUES (?, 'buy_deduction', ?, ?)",

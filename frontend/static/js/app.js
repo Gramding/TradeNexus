@@ -93,6 +93,12 @@ const tradeMultiplier   = document.getElementById('trade-multiplier');
 const tradeStrike       = document.getElementById('trade-strike');
 const tradeExpiration   = document.getElementById('trade-expiration');
 const tradeUnderlying   = document.getElementById('trade-underlying');
+const bondFields        = document.getElementById('bond-fields');
+const tradeFaceValue    = document.getElementById('trade-face-value');
+const tradeCouponRate   = document.getElementById('trade-coupon-rate');
+const tradeCouponFreq   = document.getElementById('trade-coupon-frequency');
+const tradeMaturity     = document.getElementById('trade-maturity');
+const tradeAccrued      = document.getElementById('trade-accrued');
 const totalPreview      = document.getElementById('total-preview');
 const cashWarning       = document.getElementById('cash-warning');
 const btnResetTrade     = document.getElementById('btn-reset-trade');
@@ -736,14 +742,20 @@ async function duplicateTrade(t) {
   tradeCommission.readOnly  = true;
   tradeCommission.classList.remove('editable');
 
-  // Carry the contract details across for option duplicates (strike/expiration
-  // describe the same contract; the user can adjust before submitting).
+  // Carry the contract / bond details across for duplicates (strike/expiration
+  // and face_value/maturity describe the same instrument; the user can adjust).
   updateContractFields();       // show/seed fields for this trade type
   if (isOptionType(t.trade_type)) {
     if (t.multiplier)      tradeMultiplier.value = t.multiplier;
     if (t.strike_price != null)   tradeStrike.value     = t.strike_price;
     if (t.expiration_date)        tradeExpiration.value = t.expiration_date;
     if (t.underlying)             tradeUnderlying.value = t.underlying;
+  } else if (isBondType(t.trade_type)) {
+    if (t.face_value)             tradeFaceValue.value  = t.face_value;
+    if (t.coupon_rate != null)    tradeCouponRate.value = t.coupon_rate;
+    if (t.coupon_frequency)       tradeCouponFreq.value = t.coupon_frequency;
+    if (t.maturity_date)          tradeMaturity.value   = t.maturity_date;
+    // Accrued isn't duplicated — it's lot-specific to the original purchase date.
   }
 
   updateAddTradeCommission();   // recompute commission estimate + formula
@@ -805,36 +817,47 @@ document.getElementById('btn-export-csv').addEventListener('click', async () => 
 
 // ── Option / contract fields ───────────────────────────────────────────────────
 // Trade types that carry a standard 100x contract multiplier (matches the
-// backend's OPTION_TRADE_TYPES). Comparison is case-insensitive.
+// backend's OPTION_TRADE_TYPES / BOND_TRADE_TYPES). Comparison is case-insensitive.
 const OPTION_TYPES = ['call', 'put'];
+const BOND_TYPES   = ['bond'];
 const DEFAULT_OPTION_MULTIPLIER = 100;
+const DEFAULT_BOND_FACE_VALUE   = 1000;
 
-function isOptionType(name) {
-  return OPTION_TYPES.includes(String(name || '').toLowerCase());
-}
+function isOptionType(name) { return OPTION_TYPES.includes(String(name || '').toLowerCase()); }
+function isBondType(name)   { return BOND_TYPES.includes(String(name || '').toLowerCase()); }
 
-// The multiplier currently in effect: the explicit field value when the contract
-// fields are showing, else 100 for Call/Put, else 1. Mirrors _resolve_multiplier.
+// The multiplier currently in effect: explicit when shown, else derived from
+// the active type (Bond = face_value/100, Call/Put = 100, else 1). Mirrors the
+// backend's _resolve_multiplier so the total preview matches the recorded value.
 function effectiveMultiplier() {
   if (!contractFields.classList.contains('hidden')) {
     const m = parseFloat(tradeMultiplier.value);
     if (m > 0) return m;
   }
-  return isOptionType(tradeType.value) ? DEFAULT_OPTION_MULTIPLIER : 1;
+  if (isOptionType(tradeType.value)) return DEFAULT_OPTION_MULTIPLIER;
+  if (isBondType(tradeType.value)) {
+    const fv = parseFloat(tradeFaceValue.value) || DEFAULT_BOND_FACE_VALUE;
+    return fv / 100;
+  }
+  return 1;
 }
 
-// Show the contract fields for option types and default the multiplier to 100;
-// hide and clear them otherwise. Keeps total preview + cash warning in sync.
+// Show the type-specific fields for the active trade type, defaulting the
+// option multiplier to 100 or the bond face value to 1000.
 function updateContractFields() {
-  if (isOptionType(tradeType.value)) {
-    contractFields.classList.remove('hidden');
-    if (!tradeMultiplier.value) tradeMultiplier.value = DEFAULT_OPTION_MULTIPLIER;
-  } else {
-    contractFields.classList.add('hidden');
-    tradeMultiplier.value = '';
-    tradeStrike.value = '';
-    tradeExpiration.value = '';
-    tradeUnderlying.value = '';
+  const isOption = isOptionType(tradeType.value);
+  const isBond   = isBondType(tradeType.value);
+  contractFields.classList.toggle('hidden', !isOption);
+  bondFields.classList.toggle('hidden', !isBond);
+  if (isOption && !tradeMultiplier.value) tradeMultiplier.value = DEFAULT_OPTION_MULTIPLIER;
+  if (isBond   && !tradeFaceValue.value)  tradeFaceValue.value  = DEFAULT_BOND_FACE_VALUE;
+  if (!isOption) {
+    tradeMultiplier.value = ''; tradeStrike.value = '';
+    tradeExpiration.value = ''; tradeUnderlying.value = '';
+  }
+  if (!isBond) {
+    tradeFaceValue.value = ''; tradeCouponRate.value = '';
+    tradeCouponFreq.value = ''; tradeMaturity.value = ''; tradeAccrued.value = '';
   }
   updateTotalPreview();
   updateCashWarning();
@@ -842,6 +865,8 @@ function updateContractFields() {
 
 tradeType.addEventListener('change', updateContractFields);
 tradeMultiplier.addEventListener('input', () => { updateTotalPreview(); updateCashWarning(); });
+tradeFaceValue.addEventListener('input', () => { updateTotalPreview(); updateCashWarning(); });
+tradeAccrued.addEventListener('input', updateCashWarning);
 
 // ── Total preview ─────────────────────────────────────────────────────────────
 function updateTotalPreview() {
@@ -1158,7 +1183,8 @@ function updateCashWarning() {
   const qty   = parseFloat(tradeQuantity.value)   || 0;
   const price = parseFloat(tradePrice.value)      || 0;
   const comm  = parseFloat(tradeCommission.value) || 0;
-  const net   = qty * price * effectiveMultiplier() + comm;
+  const accrued = parseFloat(tradeAccrued.value) || 0;
+  const net   = qty * price * effectiveMultiplier() + comm + accrued;
 
   if (net > formCashBalance) {
     const over = net - formCashBalance;
@@ -1234,6 +1260,19 @@ addTradeForm.addEventListener('submit', async (e) => {
     if (strike >= 0 && tradeStrike.value !== '') payload.strike_price = strike;
     if (tradeExpiration.value) payload.expiration_date = tradeExpiration.value;
     if (tradeUnderlying.value.trim()) payload.underlying = tradeUnderlying.value.trim().toUpperCase();
+  }
+
+  // Bond fields. face_value drives the multiplier server-side; the other fields
+  // (coupon/maturity) are metadata and accrued_interest bumps the cash debit.
+  if (!bondFields.classList.contains('hidden')) {
+    const fv = parseFloat(tradeFaceValue.value);
+    if (fv > 0) payload.face_value = fv;
+    const cr = parseFloat(tradeCouponRate.value);
+    if (cr >= 0 && tradeCouponRate.value !== '') payload.coupon_rate = cr;
+    if (tradeCouponFreq.value) payload.coupon_frequency = parseInt(tradeCouponFreq.value);
+    if (tradeMaturity.value) payload.maturity_date = tradeMaturity.value;
+    const ai = parseFloat(tradeAccrued.value);
+    if (ai > 0) payload.accrued_interest = ai;
   }
 
   btnSubmitTrade.disabled = true;

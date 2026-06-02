@@ -120,7 +120,18 @@
     "underlying": "Underlying",
     "open_long": "Buy (long)",
     "open_short": "Sell short",
-    "action_hint": "Open a position. Close it later from the Positions tab."
+    "action_hint": "Open a position. Close it later from the Positions tab.",
+    "face_value": "Face value",
+    "face_value_hint": "Par per bond. Most US corporate / treasury bonds are 1000.",
+    "coupon_rate": "Coupon rate (%)",
+    "coupon_frequency": "Coupon frequency",
+    "freq_annual": "Annual (1)",
+    "freq_semiannual": "Semiannual (2)",
+    "freq_quarterly": "Quarterly (4)",
+    "freq_monthly": "Monthly (12)",
+    "maturity": "Maturity",
+    "accrued_interest": "Accrued interest at purchase",
+    "accrued_hint": "Bundled into the cash debit, not cost basis."
   },
   "positions": {
     "title": "Positions",

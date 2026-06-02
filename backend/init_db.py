@@ -33,15 +33,16 @@ DEFAULT_TYPE_COLORS = {
     "Futures": "#e6c84f",
     "Call":    "#2bb6c4",
     "Put":     "#e05c5c",
+    "Bond":    "#9aa0a6",
     "Other":   "#7b8099",
 }
 
 # Default trade types (name, is_default, color). is_default=1 marks app-seeded rows.
-# The asset-class-aligned names (ETF/Crypto/Forex/Futures) let an instrument's
+# The asset-class-aligned names (ETF/Crypto/Forex/Futures/Bond) let an instrument's
 # asset_class auto-fill the trade type by name. Call/Put/Other remain for options
 # and unlisted free-text entries that have no asset class.
 SEED_TRADE_TYPES = [(name, 1, DEFAULT_TYPE_COLORS[name]) for name in (
-    "Stock", "ETF", "Crypto", "Forex", "Futures", "Call", "Put", "Other",
+    "Stock", "ETF", "Crypto", "Forex", "Futures", "Call", "Put", "Bond", "Other",
 )]
 
 # trades schema WITHOUT the legacy trade_type CHECK constraint. Used to rebuild an
@@ -336,13 +337,19 @@ def _migrate(conn):
 
 
 _PHASE1_TRADE_COLUMNS = [
-    ("direction",       "TEXT NOT NULL DEFAULT 'long'"),
-    ("multiplier",      "REAL NOT NULL DEFAULT 1"),
-    ("strike_price",    "REAL"),
-    ("expiration_date", "TEXT"),
-    ("underlying",      "TEXT"),
-    ("trade_currency",  "TEXT NOT NULL DEFAULT 'USD'"),
-    ("fx_rate",         "REAL NOT NULL DEFAULT 1"),
+    ("direction",        "TEXT NOT NULL DEFAULT 'long'"),
+    ("multiplier",       "REAL NOT NULL DEFAULT 1"),
+    ("strike_price",     "REAL"),
+    ("expiration_date",  "TEXT"),
+    ("underlying",       "TEXT"),
+    ("trade_currency",   "TEXT NOT NULL DEFAULT 'USD'"),
+    ("fx_rate",          "REAL NOT NULL DEFAULT 1"),
+    # Phase 6 (bonds): all nullable, harmless on non-bond trades.
+    ("face_value",       "REAL"),
+    ("coupon_rate",      "REAL"),
+    ("coupon_frequency", "INTEGER"),
+    ("maturity_date",    "TEXT"),
+    ("accrued_interest", "REAL"),
 ]
 
 
@@ -391,9 +398,12 @@ def _migrate_cash_pool_event_types(conn):
 
 
 def _migrate_phase1_columns(conn):
-    """Add Phase 1 columns to `trades`, idempotently. Creates `events` and
-    `fx_rates` tables if missing (schema.sql also creates them on fresh installs;
-    this covers existing databases that pre-date the new tables)."""
+    """Add the additive trade columns introduced from Phase 1 onward
+    (direction/multiplier/option metadata, currency/fx, bond fields),
+    idempotently. Creates `events` and `fx_rates` tables if missing (schema.sql
+    also creates them on fresh installs; this covers existing databases that
+    pre-date the new tables). Name kept for migration-history continuity even
+    though later phases append to the same column list."""
     cur = conn.cursor()
     cur.execute("PRAGMA table_info(trades)")
     existing = {row[1] for row in cur.fetchall()}

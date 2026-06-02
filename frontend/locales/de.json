@@ -120,7 +120,18 @@
     "underlying": "Basiswert",
     "open_long": "Kaufen (Long)",
     "open_short": "Leerverkauf",
-    "action_hint": "Position eröffnen. Schließen Sie sie später im Tab Positionen."
+    "action_hint": "Position eröffnen. Schließen Sie sie später im Tab Positionen.",
+    "face_value": "Nennwert",
+    "face_value_hint": "Nennwert je Anleihe. Standard ist 1000.",
+    "coupon_rate": "Kuponzins (%)",
+    "coupon_frequency": "Kupon-Frequenz",
+    "freq_annual": "Jährlich (1)",
+    "freq_semiannual": "Halbjährlich (2)",
+    "freq_quarterly": "Vierteljährlich (4)",
+    "freq_monthly": "Monatlich (12)",
+    "maturity": "Fälligkeit",
+    "accrued_interest": "Stückzinsen beim Kauf",
+    "accrued_hint": "Wird der Cash-Belastung zugeschlagen, nicht den Anschaffungskosten."
   },
   "positions": {
     "title": "Positionen",
