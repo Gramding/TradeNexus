@@ -134,7 +134,7 @@ def get_positions_with_prices(
         cur.execute(
             "SELECT t.id, t.ticker, t.trade_type, t.trade_date, t.remaining_quantity, "
             "t.price_per_unit, t.status, t.broker_id, b.color, t.quantity, t.commission, "
-            "i.symbol, i.name, i.exchange, i.asset_class, i.id "
+            "i.symbol, i.name, i.exchange, i.asset_class, i.id, t.multiplier "
             "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
             "LEFT JOIN instruments i ON t.instrument_id = i.id "
             "WHERE t.user_id = ? AND t.action = 'buy' AND t.status IN ('open', 'partial') "
@@ -147,9 +147,11 @@ def get_positions_with_prices(
         groups: dict[tuple, dict] = {}
         for (trade_id, ticker, trade_type, trade_date, remaining_qty, price_per_unit,
              status, broker_id, broker_color, orig_quantity, buy_commission,
-             instr_symbol, instr_name, instr_exchange, instr_asset_class, instr_id) in rows:
+             instr_symbol, instr_name, instr_exchange, instr_asset_class, instr_id,
+             multiplier) in rows:
             remaining_qty  = float(remaining_qty)
             price_per_unit = float(price_per_unit)
+            multiplier     = float(multiplier) if multiplier is not None else 1.0
             key = (ticker, trade_type)
             if key not in groups:
                 groups[key] = {
@@ -160,7 +162,9 @@ def get_positions_with_prices(
                     "exchange":                 instr_exchange,
                     "asset_class":              instr_asset_class,
                     "trade_type":               trade_type,
+                    "multiplier":               multiplier,
                     "total_remaining_quantity": 0.0,
+                    "total_raw_cost":           0.0,
                     "total_cost_basis":         0.0,
                     "lots":                     [],
                     "broker_qty":               {},  # broker_id -> {broker_id, color, qty}
@@ -174,12 +178,14 @@ def get_positions_with_prices(
                 groups[key]["asset_class"]   = instr_asset_class
             g = groups[key]
             g["total_remaining_quantity"] += remaining_qty
-            g["total_cost_basis"]         += remaining_qty * price_per_unit
+            g["total_raw_cost"]           += remaining_qty * price_per_unit
+            g["total_cost_basis"]         += remaining_qty * price_per_unit * multiplier
             g["lots"].append({
                 "trade_id":          trade_id,
                 "trade_date":        trade_date,
                 "remaining_quantity": remaining_qty,
                 "price_per_unit":    price_per_unit,
+                "multiplier":        multiplier,
                 "status":            status,
                 # Fields below let the sell modal estimate commissions client-side
                 "broker_id":         broker_id,
@@ -196,9 +202,12 @@ def get_positions_with_prices(
 
         positions = []
         for g in groups.values():
-            total_qty  = round(g["total_remaining_quantity"], 10)
-            cost_basis = round(g["total_cost_basis"], 10)
-            avg_cost   = round(cost_basis / total_qty, 10) if total_qty else 0.0
+            total_qty   = round(g["total_remaining_quantity"], 10)
+            cost_basis  = round(g["total_cost_basis"], 10)
+            multiplier  = g["multiplier"]
+            # avg_cost is the raw price-weighted average so it lines up with the
+            # per-unit quote; cost basis and current value carry the multiplier.
+            avg_cost    = round(g["total_raw_cost"] / total_qty, 10) if total_qty else 0.0
 
             # Dominant broker = the one with the most remaining quantity in this position
             dominant = max(g["broker_qty"].values(), key=lambda x: x["qty"]) if g["broker_qty"] else None
@@ -217,7 +226,7 @@ def get_positions_with_prices(
             current_price = price_data["price"] if price_data else None
 
             if current_price is not None:
-                current_value    = round(total_qty * current_price, 10)
+                current_value    = round(total_qty * current_price * multiplier, 10)
                 unrealized_pnl   = round(current_value - cost_basis, 10)
                 unrealized_pnl_pct = (
                     round(unrealized_pnl / cost_basis * 100, 4)
@@ -235,6 +244,7 @@ def get_positions_with_prices(
                 "exchange":                 g["exchange"],
                 "asset_class":              g["asset_class"],
                 "trade_type":               g["trade_type"],
+                "multiplier":               multiplier,
                 "total_remaining_quantity": total_qty,
                 "avg_cost_per_unit":        avg_cost,
                 "total_cost_basis":         cost_basis,

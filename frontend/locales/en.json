@@ -112,7 +112,12 @@
     "cash_warning": "This trade ({amount}) would exceed your cash balance ({balance}) by {diff}",
     "cash_empty": "Your cash pool is empty. Consider adding a deposit first.",
     "autofill_hint": "Autofilled from cached price ({price} as of {age}). You can edit this.",
-    "instrument_save_failed": "Could not save instrument: {error}"
+    "instrument_save_failed": "Could not save instrument: {error}",
+    "multiplier": "Contract multiplier",
+    "multiplier_hint": "Shares per contract. Standard US equity options are 100.",
+    "strike": "Strike price ($)",
+    "expiration": "Expiration",
+    "underlying": "Underlying"
   },
   "positions": {
     "title": "Positions",

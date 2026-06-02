@@ -195,6 +195,28 @@
               </div>
             </div>
 
+            <!-- Option / contract details: shown only for multiplier-bearing types
+                 (Call/Put), or whenever a non-1 multiplier is in play. -->
+            <div id="contract-fields" class="field-group hidden">
+              <div class="field">
+                <label for="trade-multiplier" data-i18n="trade_form.multiplier">Contract multiplier</label>
+                <input id="trade-multiplier" type="number" min="0.0001" step="any" placeholder="100" />
+                <p class="field-hint" data-i18n="trade_form.multiplier_hint">Shares per contract. Standard US equity options are 100.</p>
+              </div>
+              <div class="field">
+                <label for="trade-strike" data-i18n="trade_form.strike">Strike price ($)</label>
+                <input id="trade-strike" type="number" min="0" step="any" placeholder="0.00" />
+              </div>
+              <div class="field">
+                <label for="trade-expiration" data-i18n="trade_form.expiration">Expiration</label>
+                <input id="trade-expiration" type="date" />
+              </div>
+              <div class="field">
+                <label for="trade-underlying" data-i18n="trade_form.underlying">Underlying</label>
+                <input id="trade-underlying" type="text" placeholder="e.g. AAPL" autocomplete="off" />
+              </div>
+            </div>
+
             <div id="price-autofill-hint" class="price-autofill-hint hidden"></div>
 
             <div id="cash-warning" class="cash-warning hidden"></div>

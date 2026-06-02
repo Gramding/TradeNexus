@@ -88,6 +88,11 @@ const tradeBrokerEl     = document.getElementById('trade-broker');
 const tradeCommission   = document.getElementById('trade-commission');
 const tradeCommOverride = document.getElementById('trade-commission-override');
 const tradeCommFormula  = document.getElementById('trade-commission-formula');
+const contractFields    = document.getElementById('contract-fields');
+const tradeMultiplier   = document.getElementById('trade-multiplier');
+const tradeStrike       = document.getElementById('trade-strike');
+const tradeExpiration   = document.getElementById('trade-expiration');
+const tradeUnderlying   = document.getElementById('trade-underlying');
 const totalPreview      = document.getElementById('total-preview');
 const cashWarning       = document.getElementById('cash-warning');
 const btnResetTrade     = document.getElementById('btn-reset-trade');
@@ -731,8 +736,18 @@ async function duplicateTrade(t) {
   tradeCommission.readOnly  = true;
   tradeCommission.classList.remove('editable');
 
+  // Carry the contract details across for option duplicates (strike/expiration
+  // describe the same contract; the user can adjust before submitting).
+  updateContractFields();       // show/seed fields for this trade type
+  if (isOptionType(t.trade_type)) {
+    if (t.multiplier)      tradeMultiplier.value = t.multiplier;
+    if (t.strike_price != null)   tradeStrike.value     = t.strike_price;
+    if (t.expiration_date)        tradeExpiration.value = t.expiration_date;
+    if (t.underlying)             tradeUnderlying.value = t.underlying;
+  }
+
   updateAddTradeCommission();   // recompute commission estimate + formula
-  updateTotalPreview();         // refresh the total preview from qty * price
+  updateTotalPreview();         // refresh the total preview from qty * price * multiplier
 
   addTradeForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
   tradeQuantity.focus();
@@ -788,11 +803,52 @@ document.getElementById('btn-export-csv').addEventListener('click', async () => 
   }
 });
 
+// ── Option / contract fields ───────────────────────────────────────────────────
+// Trade types that carry a standard 100x contract multiplier (matches the
+// backend's OPTION_TRADE_TYPES). Comparison is case-insensitive.
+const OPTION_TYPES = ['call', 'put'];
+const DEFAULT_OPTION_MULTIPLIER = 100;
+
+function isOptionType(name) {
+  return OPTION_TYPES.includes(String(name || '').toLowerCase());
+}
+
+// The multiplier currently in effect: the explicit field value when the contract
+// fields are showing, else 100 for Call/Put, else 1. Mirrors _resolve_multiplier.
+function effectiveMultiplier() {
+  if (!contractFields.classList.contains('hidden')) {
+    const m = parseFloat(tradeMultiplier.value);
+    if (m > 0) return m;
+  }
+  return isOptionType(tradeType.value) ? DEFAULT_OPTION_MULTIPLIER : 1;
+}
+
+// Show the contract fields for option types and default the multiplier to 100;
+// hide and clear them otherwise. Keeps total preview + cash warning in sync.
+function updateContractFields() {
+  if (isOptionType(tradeType.value)) {
+    contractFields.classList.remove('hidden');
+    if (!tradeMultiplier.value) tradeMultiplier.value = DEFAULT_OPTION_MULTIPLIER;
+  } else {
+    contractFields.classList.add('hidden');
+    tradeMultiplier.value = '';
+    tradeStrike.value = '';
+    tradeExpiration.value = '';
+    tradeUnderlying.value = '';
+  }
+  updateTotalPreview();
+  updateCashWarning();
+}
+
+tradeType.addEventListener('change', updateContractFields);
+tradeMultiplier.addEventListener('input', () => { updateTotalPreview(); updateCashWarning(); });
+
 // ── Total preview ─────────────────────────────────────────────────────────────
 function updateTotalPreview() {
   const qty   = parseFloat(tradeQuantity.value);
   const price = parseFloat(tradePrice.value);
-  totalPreview.textContent = (qty > 0 && price >= 0) ? formatCurrency(qty * price) : '—';
+  totalPreview.textContent =
+    (qty > 0 && price >= 0) ? formatCurrency(qty * price * effectiveMultiplier()) : '—';
 }
 tradeQuantity.addEventListener('input', updateTotalPreview);
 tradePrice.addEventListener('input', updateTotalPreview);
@@ -1102,7 +1158,7 @@ function updateCashWarning() {
   const qty   = parseFloat(tradeQuantity.value)   || 0;
   const price = parseFloat(tradePrice.value)      || 0;
   const comm  = parseFloat(tradeCommission.value) || 0;
-  const net   = qty * price + comm;
+  const net   = qty * price * effectiveMultiplier() + comm;
 
   if (net > formCashBalance) {
     const over = net - formCashBalance;
@@ -1166,6 +1222,18 @@ addTradeForm.addEventListener('submit', async (e) => {
     payload.commission = parseFloat(tradeCommission.value) || 0;
   }
 
+  // Contract details for option types. Multiplier is sent when explicitly set
+  // (otherwise the backend defaults it from the trade type); strike/expiration/
+  // underlying ride along when filled.
+  if (!contractFields.classList.contains('hidden')) {
+    const m = parseFloat(tradeMultiplier.value);
+    if (m > 0) payload.multiplier = m;
+    const strike = parseFloat(tradeStrike.value);
+    if (strike >= 0 && tradeStrike.value !== '') payload.strike_price = strike;
+    if (tradeExpiration.value) payload.expiration_date = tradeExpiration.value;
+    if (tradeUnderlying.value.trim()) payload.underlying = tradeUnderlying.value.trim().toUpperCase();
+  }
+
   btnSubmitTrade.disabled = true;
   try {
     await apiFetch(`/users/${activeUserId}/trades`, {
@@ -1190,6 +1258,7 @@ function resetAddTradeForm() {
   tradeCommission.readOnly  = true;
   tradeCommission.classList.remove('editable');
   applyDefaultBroker();          // reset restores the default broker too
+  updateContractFields();        // hide/clear option fields for the (reset) type
   updateAddTradeCommission();
   clearError(addTradeError);
   hidePriceAutofillHint();
@@ -1803,10 +1872,13 @@ function scopePositionToBroker(p, brokerId) {
   const lots = (p.lots || []).filter(l => l.broker_id === brokerId);
   if (!lots.length) return null;
   const round10 = x => Math.round(x * 1e10) / 1e10;
+  const mult  = p.multiplier || 1;   // contract multiplier (100 for options, else 1)
   const qty   = round10(lots.reduce((s, l) => s + l.remaining_quantity, 0));
-  const basis = round10(lots.reduce((s, l) => s + l.remaining_quantity * l.price_per_unit, 0));
+  // avg cost stays per-unit; basis and value fold in the multiplier (matches the backend).
+  const basis = round10(lots.reduce((s, l) => s + l.remaining_quantity * l.price_per_unit * (l.multiplier || mult), 0));
+  const rawCost = round10(lots.reduce((s, l) => s + l.remaining_quantity * l.price_per_unit, 0));
   const price = p.current_price;
-  const value = price != null ? round10(qty * price) : null;
+  const value = price != null ? round10(qty * price * mult) : null;
   const pnl   = value != null ? round10(value - basis) : null;
   const brokerName = brokerId != null
     ? (brokersById.get(brokerId)?.name ?? `Broker ${brokerId}`)
@@ -1820,7 +1892,7 @@ function scopePositionToBroker(p, brokerId) {
     lots,
     total_remaining_quantity: qty,
     total_cost_basis:         basis,
-    avg_cost_per_unit:        qty ? round10(basis / qty) : 0,
+    avg_cost_per_unit:        qty ? round10(rawCost / qty) : 0,
     current_value:            value,
     unrealized_pnl:           pnl,
     unrealized_pnl_pct:       (pnl != null && basis) ? round10(pnl / basis * 100) : null,
@@ -2126,16 +2198,16 @@ function closeSellModal() {
 // separate sell call, so the broker's flat fee applies once per lot touched and
 // the proportional buy commission is the lot's commission scaled by the share
 // of its original quantity being sold.
-function computeSellEstimate(lots, qtySold, sellPrice) {
+function computeSellEstimate(lots, qtySold, sellPrice, multiplier = 1) {
   let remaining   = qtySold;
-  let costBasis   = 0;   // gross buy cost of the shares being sold
+  let costBasis   = 0;   // gross buy cost of the units being sold (× multiplier)
   let sellComm    = 0;   // estimated sell-side commission
   let buyCommProp = 0;   // proportional buy-side commission
 
   for (const lot of lots) {
     if (remaining <= 1e-9) break;
     const allocated = Math.min(lot.remaining_quantity, remaining);
-    costBasis += allocated * lot.price_per_unit;
+    costBasis += allocated * lot.price_per_unit * (lot.multiplier || multiplier);
     sellComm  += estimateCommission(getBroker(lot.broker_id), allocated);
     if (lot.quantity > 0) {
       buyCommProp += (allocated / lot.quantity) * (lot.commission || 0);
@@ -2143,7 +2215,7 @@ function computeSellEstimate(lots, qtySold, sellPrice) {
     remaining -= allocated;
   }
 
-  const proceeds    = qtySold * sellPrice;
+  const proceeds    = qtySold * sellPrice * multiplier;
   const netProceeds = proceeds - sellComm;
   const netCost     = costBasis + buyCommProp;
   return {
@@ -2162,7 +2234,7 @@ function updateSellPreview() {
     return;
   }
 
-  const est  = computeSellEstimate(currentSellPosition.lots, qty, price);
+  const est  = computeSellEstimate(currentSellPosition.lots, qty, price, currentSellPosition.multiplier || 1);
   const sign = est.netPnl >= 0 ? '+' : '';
 
   sellPreviewBar.innerHTML =

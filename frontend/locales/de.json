@@ -112,7 +112,12 @@
     "cash_warning": "Dieser Handel ({amount}) würde Ihr Guthaben ({balance}) um {diff} überschreiten",
     "cash_empty": "Ihr Guthaben ist leer. Erwägen Sie, zunächst eine Einzahlung vorzunehmen.",
     "autofill_hint": "Automatisch aus zwischengespeichertem Preis ausgefüllt ({price}, Stand: {age}). Sie können dies bearbeiten.",
-    "instrument_save_failed": "Instrument konnte nicht gespeichert werden: {error}"
+    "instrument_save_failed": "Instrument konnte nicht gespeichert werden: {error}",
+    "multiplier": "Kontraktmultiplikator",
+    "multiplier_hint": "Anteile pro Kontrakt. Standard-US-Aktienoptionen sind 100.",
+    "strike": "Basispreis ($)",
+    "expiration": "Verfall",
+    "underlying": "Basiswert"
   },
   "positions": {
     "title": "Positionen",

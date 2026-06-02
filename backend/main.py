@@ -118,12 +118,14 @@ def _validate_iso_date(value, field: str):
 #          11=status 12=remaining_quantity 13=broker_id 14=broker_name 15=broker_color
 #          16=commission 17=net_total_value
 #          18=instr_symbol 19=instr_name 20=instr_exchange 21=instr_asset_class 22=instr_currency
+#          23=multiplier 24=strike_price 25=expiration_date 26=underlying 27=direction
 _TRADE_SELECT = (
     "SELECT t.id, t.user_id, t.ticker, t.trade_type, t.action, t.quantity, "
     "t.price_per_unit, t.total_value, t.trade_date, t.notes, t.created_at, "
     "t.status, t.remaining_quantity, t.broker_id, b.name, b.color, "
     "t.commission, t.net_total_value, "
-    "i.symbol, i.name, i.exchange, i.asset_class, i.currency "
+    "i.symbol, i.name, i.exchange, i.asset_class, i.currency, "
+    "t.multiplier, t.strike_price, t.expiration_date, t.underlying, t.direction "
     "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
     "LEFT JOIN instruments i ON t.instrument_id = i.id"
 )
@@ -195,6 +197,11 @@ def _row_to_trade(r) -> dict:
         "exchange":           r[20],
         "asset_class":        r[21],
         "currency":           r[22],
+        "multiplier":         float(r[23]) if r[23] is not None else 1.0,
+        "strike_price":       float(r[24]) if r[24] is not None else None,
+        "expiration_date":    r[25],
+        "underlying":         r[26],
+        "direction":          r[27] or "long",
     }
 
 
@@ -221,6 +228,28 @@ def _net_total(action: str, total_value: float, commission: float) -> float:
     return round(total_value + commission if action == "buy" else total_value - commission, 10)
 
 
+# Trade types whose price quotes are per-unit but whose economic exposure is
+# scaled by a contract multiplier (an equity option quote of $2.50 controls
+# 100 shares, i.e. $250 of notional). Anything else defaults to a 1x multiplier.
+OPTION_TRADE_TYPES = {"Call", "Put"}
+DEFAULT_OPTION_MULTIPLIER = 100.0
+
+
+def _resolve_multiplier(trade_type: str, override) -> float:
+    """The contract multiplier for a trade: an explicit override if given (must be
+    > 0), else 100 for Call/Put and 1 for everything else. The canonical trade_type
+    (from _normalize_trade_type) is expected here so the Call/Put match is exact."""
+    if override is not None:
+        try:
+            m = float(override)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="multiplier must be a number.")
+        if m <= 0:
+            raise HTTPException(status_code=422, detail="multiplier must be greater than 0.")
+        return round(m, 10)
+    return DEFAULT_OPTION_MULTIPLIER if trade_type in OPTION_TRADE_TYPES else 1.0
+
+
 def _row_to_sell_lot(r) -> dict:
     return {
         "id": r[0],
@@ -244,11 +273,12 @@ def _require_user(cur: sqlite3.Cursor, user_id: int):
 def _require_trade(cur: sqlite3.Cursor, trade_id: int) -> tuple:
     # Columns: 0=id 1=user_id 2=ticker 3=trade_type 4=action 5=quantity
     #          6=price_per_unit 7=total_value 8=trade_date 9=notes 10=created_at
-    #          11=status 12=remaining_quantity 13=broker_id 14=commission
+    #          11=status 12=remaining_quantity 13=broker_id 14=commission 15=multiplier
+    #          16=strike_price 17=expiration_date 18=underlying
     cur.execute(
         "SELECT id, user_id, ticker, trade_type, action, quantity, price_per_unit, "
         "total_value, trade_date, notes, created_at, status, remaining_quantity, broker_id, "
-        "commission "
+        "commission, multiplier, strike_price, expiration_date, underlying "
         "FROM trades WHERE id = ?",
         (trade_id,),
     )
@@ -290,6 +320,10 @@ class TradeCreate(BaseModel):
     broker_id: Optional[int] = None
     commission: Optional[float] = None  # None = auto-calc from broker
     instrument_id: Optional[int] = None  # set when picked from the instrument search
+    multiplier: Optional[float] = None   # None = auto (100 for Call/Put, else 1)
+    strike_price: Optional[float] = None     # options only
+    expiration_date: Optional[datetime.date] = None  # options only
+    underlying: Optional[str] = None         # options only, e.g. "AAPL"
 
 
 class TradeUpdate(BaseModel):
@@ -302,6 +336,10 @@ class TradeUpdate(BaseModel):
     notes: Optional[str] = None
     broker_id: Optional[int] = None
     commission: Optional[float] = None
+    multiplier: Optional[float] = None
+    strike_price: Optional[float] = None
+    expiration_date: Optional[datetime.date] = None
+    underlying: Optional[str] = None
 
 
 class SellLotCreate(BaseModel):
@@ -526,8 +564,8 @@ def create_trade(user_id: int, body: TradeCreate):
         raise HTTPException(status_code=422, detail="price_per_unit must be >= 0.")
     if body.commission is not None and body.commission < 0:
         raise HTTPException(status_code=422, detail="commission must be >= 0.")
-
-    total_value = round(body.quantity * body.price_per_unit, 10)
+    if body.strike_price is not None and body.strike_price < 0:
+        raise HTTPException(status_code=422, detail="strike_price must be >= 0.")
 
     conn = _db()
     try:
@@ -539,19 +577,29 @@ def create_trade(user_id: int, body: TradeCreate):
         if body.instrument_id is not None:
             _require_instrument(cur, body.instrument_id)
 
+        # total_value is the full notional: per-unit price × quantity × contract
+        # multiplier (100 for an equity option, 1 for a share). Every downstream
+        # value (net_total_value, cash deduction, stats volume) derives from this.
+        multiplier  = _resolve_multiplier(trade_type, body.multiplier)
+        total_value = round(body.quantity * body.price_per_unit * multiplier, 10)
+        expiration  = body.expiration_date.isoformat() if body.expiration_date is not None else None
+        underlying  = body.underlying.strip().upper() if body.underlying else None
+
         commission      = _compute_commission(cur, body.broker_id, body.quantity, body.commission)
         net_total_value = _net_total(body.action, total_value, commission)
 
         cur.execute(
             "INSERT INTO trades "
             "(user_id, broker_id, instrument_id, ticker, trade_type, action, quantity, price_per_unit, "
-            "total_value, trade_date, notes, remaining_quantity, commission, net_total_value) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "total_value, trade_date, notes, remaining_quantity, commission, net_total_value, "
+            "multiplier, strike_price, expiration_date, underlying) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user_id, body.broker_id, body.instrument_id, body.ticker.strip().upper(),
                 trade_type, body.action, body.quantity, body.price_per_unit, total_value,
                 body.trade_date.isoformat(), body.notes, body.quantity,
                 commission, net_total_value,
+                multiplier, body.strike_price, expiration, underlying,
             ),
         )
         trade_id = cur.lastrowid
@@ -591,6 +639,8 @@ def update_trade(trade_id: int, body: TradeUpdate):
         raise HTTPException(status_code=422, detail="price_per_unit must be >= 0.")
     if body.commission is not None and body.commission < 0:
         raise HTTPException(status_code=422, detail="commission must be >= 0.")
+    if body.strike_price is not None and body.strike_price < 0:
+        raise HTTPException(status_code=422, detail="strike_price must be >= 0.")
 
     conn = _db()
     try:
@@ -608,7 +658,21 @@ def update_trade(trade_id: int, body: TradeUpdate):
         trade_date     = body.trade_date.isoformat()        if body.trade_date     is not None else existing[8]
         notes          = body.notes                         if body.notes          is not None else existing[9]
         broker_id      = body.broker_id                     if body.broker_id      is not None else existing[13]
-        total_value    = round(quantity * price_per_unit, 10)
+
+        # Multiplier: explicit override wins; else re-resolve when the trade_type
+        # changed (so switching to/from Call/Put updates the 100x); otherwise keep
+        # the stored multiplier. total_value always reflects the current multiplier.
+        existing_multiplier  = float(existing[15]) if existing[15] is not None else 1.0
+        existing_strike      = existing[16]
+        existing_expiration  = existing[17]
+        existing_underlying  = existing[18]
+        if body.multiplier is not None:
+            multiplier = _resolve_multiplier(trade_type, body.multiplier)
+        elif body.trade_type is not None:
+            multiplier = _resolve_multiplier(trade_type, None)
+        else:
+            multiplier = existing_multiplier
+        total_value    = round(quantity * price_per_unit * multiplier, 10)
 
         # Commission: explicit override wins; else recompute when broker or quantity
         # changed; otherwise keep the existing value untouched.
@@ -620,12 +684,20 @@ def update_trade(trade_id: int, body: TradeUpdate):
             commission = float(existing[14] or 0)
         net_total_value = _net_total(action, total_value, commission)
 
+        # Option metadata: each field is replaced only when supplied, else preserved.
+        strike_price    = body.strike_price                          if body.strike_price    is not None else existing_strike
+        expiration_date = (body.expiration_date.isoformat()
+                           if body.expiration_date is not None else existing_expiration)
+        underlying      = (body.underlying.strip().upper()
+                           if body.underlying else existing_underlying)
+
         cur.execute(
             "UPDATE trades SET ticker=?, trade_type=?, action=?, quantity=?, "
             "price_per_unit=?, total_value=?, trade_date=?, notes=?, broker_id=?, "
-            "commission=?, net_total_value=? WHERE id=?",
+            "commission=?, net_total_value=?, multiplier=?, strike_price=?, "
+            "expiration_date=?, underlying=? WHERE id=?",
             (ticker, trade_type, action, quantity, price_per_unit, total_value, trade_date, notes, broker_id,
-             commission, net_total_value, trade_id),
+             commission, net_total_value, multiplier, strike_price, expiration_date, underlying, trade_id),
         )
 
         # Keep the cash pool in sync with the edit: drop this trade's old buy
@@ -737,6 +809,9 @@ def sell_trade(buy_trade_id: int, body: SellLotCreate):
         buy_price         = float(trade[6])
         buy_broker_id     = trade[13]
         buy_commission    = float(trade[14] or 0)
+        # The sell inherits the buy lot's contract multiplier so proceeds and cost
+        # basis are scaled by the same factor (e.g. 100 for an equity option).
+        multiplier        = float(trade[15]) if trade[15] is not None else 1.0
 
         remaining = float(trade[12]) if trade[12] is not None else original_quantity
         if body.quantity_sold > remaining:
@@ -748,13 +823,14 @@ def sell_trade(buy_trade_id: int, body: SellLotCreate):
         # 3. Calculate proceeds, commissions, and commission-adjusted realized P&L.
         #    Sell commission: user override, else auto-calc from the buy trade's broker.
         #    Proportional buy commission: the share of the original buy commission
-        #    attributable to the quantity being sold.
-        proceeds        = round(body.quantity_sold * body.sell_price_per_unit, 10)
+        #    attributable to the quantity being sold. Proceeds and cost basis both
+        #    include the contract multiplier so option P&L is in real dollars.
+        proceeds        = round(body.quantity_sold * body.sell_price_per_unit * multiplier, 10)
         sell_commission = _compute_commission(cur, buy_broker_id, body.quantity_sold, body.commission)
         prop_buy_commission = round(
             (body.quantity_sold / original_quantity) * buy_commission, 10
         ) if original_quantity else 0.0
-        buy_cost_basis_for_lot = body.quantity_sold * buy_price
+        buy_cost_basis_for_lot = body.quantity_sold * buy_price * multiplier
         realized_pnl = round(
             (proceeds - sell_commission) - (buy_cost_basis_for_lot + prop_buy_commission), 10
         )
@@ -786,12 +862,14 @@ def sell_trade(buy_trade_id: int, body: SellLotCreate):
         cur.execute(
             "INSERT INTO trades "
             "(user_id, broker_id, ticker, trade_type, action, quantity, price_per_unit, "
-            "total_value, trade_date, notes, status, remaining_quantity, commission, net_total_value) "
-            "VALUES (?, ?, ?, ?, 'sell', ?, ?, ?, ?, ?, 'closed', 0, ?, ?)",
+            "total_value, trade_date, notes, status, remaining_quantity, commission, net_total_value, "
+            "multiplier) "
+            "VALUES (?, ?, ?, ?, 'sell', ?, ?, ?, ?, ?, 'closed', 0, ?, ?, ?)",
             (
                 trade[1], trade[13], trade[2], trade[3],
                 body.quantity_sold, body.sell_price_per_unit, proceeds,
                 body.sell_date.isoformat(), body.notes, sell_commission, sell_net_total,
+                multiplier,
             ),
         )
 
@@ -835,7 +913,7 @@ def get_positions(user_id: int):
         cur = conn.cursor()
         _require_user(cur, user_id)
         cur.execute(
-            "SELECT id, ticker, trade_type, trade_date, remaining_quantity, price_per_unit, status "
+            "SELECT id, ticker, trade_type, trade_date, remaining_quantity, price_per_unit, status, multiplier "
             "FROM trades "
             "WHERE user_id = ? AND action = 'buy' AND status IN ('open', 'partial') "
             "ORDER BY ticker, trade_type, trade_date, id",
@@ -850,41 +928,48 @@ def get_positions(user_id: int):
     finally:
         conn.close()
 
-    # Group by (ticker, trade_type) in insertion order
+    # Group by (ticker, trade_type) in insertion order. avg_cost_per_unit stays the
+    # raw price-weighted average (comparable to a quote); total_cost_basis folds in
+    # the contract multiplier so it is in real dollars for options.
     groups: dict[tuple, dict] = {}
-    for trade_id, ticker, trade_type, trade_date, remaining_qty, price_per_unit, status in rows:
+    for trade_id, ticker, trade_type, trade_date, remaining_qty, price_per_unit, status, multiplier in rows:
         remaining_qty = float(remaining_qty)
         price_per_unit = float(price_per_unit)
+        multiplier = float(multiplier) if multiplier is not None else 1.0
         key = (ticker, trade_type)
         if key not in groups:
             groups[key] = {
                 "ticker": ticker,
                 "trade_type": trade_type,
+                "multiplier": multiplier,
                 "total_remaining_quantity": 0.0,
+                "total_raw_cost": 0.0,
                 "total_cost_basis": 0.0,
                 "lots": [],
             }
         g = groups[key]
         g["total_remaining_quantity"] += remaining_qty
-        g["total_cost_basis"] += remaining_qty * price_per_unit
+        g["total_raw_cost"] += remaining_qty * price_per_unit
+        g["total_cost_basis"] += remaining_qty * price_per_unit * multiplier
         g["lots"].append({
             "trade_id": trade_id,
             "trade_date": trade_date,
             "remaining_quantity": remaining_qty,
             "price_per_unit": price_per_unit,
+            "multiplier": multiplier,
             "status": status,
         })
 
     positions = []
     for g in groups.values():
         total_qty = g["total_remaining_quantity"]
-        cost_basis = g["total_cost_basis"]
         positions.append({
             "ticker": g["ticker"],
             "trade_type": g["trade_type"],
+            "multiplier": g["multiplier"],
             "total_remaining_quantity": round(total_qty, 10),
-            "avg_cost_per_unit": round(cost_basis / total_qty, 10) if total_qty else 0.0,
-            "total_cost_basis": round(cost_basis, 10),
+            "avg_cost_per_unit": round(g["total_raw_cost"] / total_qty, 10) if total_qty else 0.0,
+            "total_cost_basis": round(g["total_cost_basis"], 10),
             "lots": g["lots"],
         })
 
@@ -1147,7 +1232,8 @@ def _search_positions_bucket(cur, user_id, like, cursor) -> dict:
     sql = (
         "SELECT ticker, trade_type, "
         "SUM(remaining_quantity) AS rem, "
-        "SUM(remaining_quantity * price_per_unit) AS basis "
+        "SUM(remaining_quantity * price_per_unit) AS raw_cost, "
+        "SUM(remaining_quantity * price_per_unit * multiplier) AS basis "
         "FROM trades "
         "WHERE user_id = ? AND action = 'buy' AND status IN ('open', 'partial') "
         "AND ticker LIKE ?"
@@ -1168,12 +1254,13 @@ def _search_positions_bucket(cur, user_id, like, cursor) -> dict:
     results = []
     for r in rows:
         rem = float(r[2] or 0)
-        basis = float(r[3] or 0)
+        raw_cost = float(r[3] or 0)
+        basis = float(r[4] or 0)
         results.append({
             "ticker":                   r[0],
             "trade_type":               r[1],
             "total_remaining_quantity": round(rem, 10),
-            "avg_cost_per_unit":        round(basis / rem, 10) if rem else 0.0,
+            "avg_cost_per_unit":        round(raw_cost / rem, 10) if rem else 0.0,
             "total_cost_basis":         round(basis, 10),
         })
     next_cursor = (
