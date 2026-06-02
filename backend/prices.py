@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from db import get_connection
 from price_service import get_or_fetch_price, get_cached_price, get_price_source
+import fx_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["prices"])
@@ -111,6 +112,39 @@ def refresh_prices(body: PriceRefreshBody):
     return results
 
 
+@router.get("/fx/{from_currency}/{to_currency}")
+def get_fx(
+    from_currency: str,
+    to_currency: str,
+    cache_only: bool = Query(default=False),
+):
+    """FX rate from_currency -> to_currency (e.g. /fx/EUR/USD). 1.0 for same
+    currency. cache_only never fetches live — used by the Add-trade form to
+    pre-fill the fx_rate field without a blocking network call."""
+    conn = _db()
+    try:
+        if cache_only:
+            rate = fx_service.get_cached_fx(conn, from_currency, to_currency)
+        else:
+            rate = fx_service.get_or_fetch_fx(conn, from_currency, to_currency)
+    except sqlite3.Error as exc:
+        logger.error("get_fx DB error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to fetch FX rate.")
+    finally:
+        conn.close()
+
+    if rate is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No FX rate available for {from_currency.upper()}->{to_currency.upper()}.",
+        )
+    return {
+        "from_currency": from_currency.upper(),
+        "to_currency":   to_currency.upper(),
+        "rate":          rate,
+    }
+
+
 @router.get("/users/{user_id}/positions/prices")
 def get_positions_with_prices(
     user_id: int,
@@ -131,14 +165,18 @@ def get_positions_with_prices(
 
         # JOIN instruments so each position carries its Yahoo symbol; prices are
         # fetched by symbol while the display ticker is shown to the user.
+        # Open lots: long opens (buy/long) and short opens (sell/short). Synthetic
+        # close rows are status='closed' and excluded.
         cur.execute(
             "SELECT t.id, t.ticker, t.trade_type, t.trade_date, t.remaining_quantity, "
             "t.price_per_unit, t.status, t.broker_id, b.color, t.quantity, t.commission, "
-            "i.symbol, i.name, i.exchange, i.asset_class, i.id "
+            "i.symbol, i.name, i.exchange, i.asset_class, i.id, t.multiplier, t.direction, "
+            "t.trade_currency, t.fx_rate "
             "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
             "LEFT JOIN instruments i ON t.instrument_id = i.id "
-            "WHERE t.user_id = ? AND t.action = 'buy' AND t.status IN ('open', 'partial') "
-            "ORDER BY t.ticker, t.trade_type, t.trade_date, t.id",
+            "WHERE t.user_id = ? AND t.status IN ('open', 'partial') "
+            "AND ((t.action = 'buy' AND t.direction = 'long') OR (t.action = 'sell' AND t.direction = 'short')) "
+            "ORDER BY t.ticker, t.trade_type, t.direction, t.trade_date, t.id",
             (user_id,),
         )
         rows = cur.fetchall()
@@ -147,10 +185,14 @@ def get_positions_with_prices(
         groups: dict[tuple, dict] = {}
         for (trade_id, ticker, trade_type, trade_date, remaining_qty, price_per_unit,
              status, broker_id, broker_color, orig_quantity, buy_commission,
-             instr_symbol, instr_name, instr_exchange, instr_asset_class, instr_id) in rows:
+             instr_symbol, instr_name, instr_exchange, instr_asset_class, instr_id,
+             multiplier, direction, trade_currency, fx_rate) in rows:
             remaining_qty  = float(remaining_qty)
             price_per_unit = float(price_per_unit)
-            key = (ticker, trade_type)
+            multiplier     = float(multiplier) if multiplier is not None else 1.0
+            fx_rate        = float(fx_rate) if fx_rate is not None else 1.0
+            direction      = direction or "long"
+            key = (ticker, trade_type, direction)
             if key not in groups:
                 groups[key] = {
                     "ticker":                   ticker,
@@ -160,8 +202,14 @@ def get_positions_with_prices(
                     "exchange":                 instr_exchange,
                     "asset_class":              instr_asset_class,
                     "trade_type":               trade_type,
+                    "direction":                direction,
+                    "multiplier":               multiplier,
+                    "currency":                 trade_currency or "USD",
+                    "fx_rate":                  fx_rate,
                     "total_remaining_quantity": 0.0,
+                    "total_raw_cost":           0.0,
                     "total_cost_basis":         0.0,
+                    "total_cost_basis_base":    0.0,
                     "lots":                     [],
                     "broker_qty":               {},  # broker_id -> {broker_id, color, qty}
                 }
@@ -174,12 +222,15 @@ def get_positions_with_prices(
                 groups[key]["asset_class"]   = instr_asset_class
             g = groups[key]
             g["total_remaining_quantity"] += remaining_qty
-            g["total_cost_basis"]         += remaining_qty * price_per_unit
+            g["total_raw_cost"]           += remaining_qty * price_per_unit
+            g["total_cost_basis"]         += remaining_qty * price_per_unit * multiplier
+            g["total_cost_basis_base"]    += remaining_qty * price_per_unit * multiplier * fx_rate
             g["lots"].append({
                 "trade_id":          trade_id,
                 "trade_date":        trade_date,
                 "remaining_quantity": remaining_qty,
                 "price_per_unit":    price_per_unit,
+                "multiplier":        multiplier,
                 "status":            status,
                 # Fields below let the sell modal estimate commissions client-side
                 "broker_id":         broker_id,
@@ -196,9 +247,12 @@ def get_positions_with_prices(
 
         positions = []
         for g in groups.values():
-            total_qty  = round(g["total_remaining_quantity"], 10)
-            cost_basis = round(g["total_cost_basis"], 10)
-            avg_cost   = round(cost_basis / total_qty, 10) if total_qty else 0.0
+            total_qty   = round(g["total_remaining_quantity"], 10)
+            cost_basis  = round(g["total_cost_basis"], 10)
+            multiplier  = g["multiplier"]
+            # avg_cost is the raw price-weighted average so it lines up with the
+            # per-unit quote; cost basis and current value carry the multiplier.
+            avg_cost    = round(g["total_raw_cost"] / total_qty, 10) if total_qty else 0.0
 
             # Dominant broker = the one with the most remaining quantity in this position
             dominant = max(g["broker_qty"].values(), key=lambda x: x["qty"]) if g["broker_qty"] else None
@@ -216,9 +270,17 @@ def get_positions_with_prices(
 
             current_price = price_data["price"] if price_data else None
 
+            direction = g["direction"]
             if current_price is not None:
-                current_value    = round(total_qty * current_price, 10)
-                unrealized_pnl   = round(current_value - cost_basis, 10)
+                # current_value is the live market value of the units (the cost to
+                # buy back, for a short). A long gains when value rises above its
+                # cost basis; a short gains when the buy-back value falls below the
+                # proceeds it received (cost_basis).
+                current_value    = round(total_qty * current_price * multiplier, 10)
+                unrealized_pnl   = round(
+                    (cost_basis - current_value) if direction == "short"
+                    else (current_value - cost_basis), 10
+                )
                 unrealized_pnl_pct = (
                     round(unrealized_pnl / cost_basis * 100, 4)
                     if cost_basis != 0 else None
@@ -235,9 +297,13 @@ def get_positions_with_prices(
                 "exchange":                 g["exchange"],
                 "asset_class":              g["asset_class"],
                 "trade_type":               g["trade_type"],
+                "direction":                direction,
+                "multiplier":               multiplier,
+                "currency":                 g["currency"],
                 "total_remaining_quantity": total_qty,
                 "avg_cost_per_unit":        avg_cost,
                 "total_cost_basis":         cost_basis,
+                "total_cost_basis_base":    round(g["total_cost_basis_base"], 10),
                 "lots":                     g["lots"],
                 "broker_color":             broker_color,
                 "current_price":            current_price,

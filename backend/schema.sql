@@ -49,6 +49,13 @@ CREATE TABLE IF NOT EXISTS trades (
     net_total_value    REAL,
     status             TEXT     NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'partial', 'closed')),
     remaining_quantity REAL,
+    direction          TEXT     NOT NULL DEFAULT 'long' CHECK (direction IN ('long', 'short')),
+    multiplier         REAL     NOT NULL DEFAULT 1 CHECK (multiplier > 0),
+    strike_price       REAL,
+    expiration_date    TEXT,
+    underlying         TEXT,
+    trade_currency     TEXT     NOT NULL DEFAULT 'USD',
+    fx_rate            REAL     NOT NULL DEFAULT 1 CHECK (fx_rate > 0),
     created_at         TEXT     NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -95,4 +102,37 @@ CREATE TABLE IF NOT EXISTS trade_types (
     is_default INTEGER  NOT NULL DEFAULT 0,         -- 1 = seeded by the app, 0 = user-created
     color      TEXT,                                -- optional "#rrggbb" for charts/badges
     created_at TEXT     NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Income, distribution, and corporate-action events that affect a user's portfolio
+-- without being a buy/sell trade. Wired up by Phase 5; created here so the schema
+-- is in place for migrations and forward compatibility.
+--   dividend : amount is cash-per-share on event_date; instrument_id required
+--   split    : ratio is new/old (2.0 = 2-for-1, 0.5 = reverse 1-for-2); instrument required
+--   interest : amount is total cash credit; instrument optional
+--   fee      : amount is total cash debit; instrument optional
+CREATE TABLE IF NOT EXISTS events (
+    id            INTEGER  PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    instrument_id INTEGER  REFERENCES instruments(id),
+    event_type    TEXT     NOT NULL CHECK (event_type IN ('dividend', 'split', 'interest', 'fee')),
+    event_date    TEXT     NOT NULL,
+    amount        REAL,
+    ratio         REAL,
+    currency      TEXT     NOT NULL DEFAULT 'USD',
+    fx_rate       REAL     NOT NULL DEFAULT 1 CHECK (fx_rate > 0),
+    note          TEXT,
+    created_at    TEXT     NOT NULL DEFAULT (datetime('now'))
+);
+
+-- FX-rate cache: 1 unit of from_currency = `rate` units of to_currency at `fetched_at`.
+-- Used by Phase 4 to convert trade-currency amounts into the user's base currency.
+CREATE TABLE IF NOT EXISTS fx_rates (
+    id            INTEGER  PRIMARY KEY AUTOINCREMENT,
+    from_currency TEXT     NOT NULL,
+    to_currency   TEXT     NOT NULL,
+    rate          REAL     NOT NULL CHECK (rate > 0),
+    fetched_at    TEXT     NOT NULL DEFAULT (datetime('now')),
+    source        TEXT     NOT NULL DEFAULT 'yahoo_finance',
+    UNIQUE(from_currency, to_currency, source)
 );

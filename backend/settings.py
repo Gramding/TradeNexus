@@ -24,6 +24,7 @@ SUPPORTED_LANGUAGES = {"en", "de"}
 ALLOWED_SETTINGS = {
     "display_name",
     "currency",
+    "base_currency",
     "language",
     "date_format",
     "decimal_separator",
@@ -77,6 +78,12 @@ def _validate_setting(key: str, value) -> str:
             raise HTTPException(status_code=400, detail="date_format_manual_override must be '0' or '1'.")
         return str(value)
 
+    if key == "base_currency":
+        s = str(value or "").strip().upper()
+        if len(s) != 3 or not s.isalpha():
+            raise HTTPException(status_code=400, detail="base_currency must be a 3-letter ISO code (e.g. USD, EUR).")
+        return s
+
     # display_name, currency, default_broker_id: free-form strings.
     return "" if value is None else str(value)
 
@@ -105,6 +112,14 @@ def update_settings(payload: dict = Body(...)):
 
     # Validate everything before writing anything.
     normalized = {key: _validate_setting(key, value) for key, value in payload.items()}
+
+    # `currency` (display) and `base_currency` (reporting/FX base) are kept in sync
+    # so the app has a single reporting currency. Setting either updates both,
+    # unless the request explicitly sets both to different values.
+    if "currency" in normalized and "base_currency" not in normalized:
+        normalized["base_currency"] = _validate_setting("base_currency", normalized["currency"])
+    elif "base_currency" in normalized and "currency" not in normalized:
+        normalized["currency"] = normalized["base_currency"]
 
     conn = get_connection()
     try:

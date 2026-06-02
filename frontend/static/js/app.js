@@ -88,6 +88,11 @@ const tradeBrokerEl     = document.getElementById('trade-broker');
 const tradeCommission   = document.getElementById('trade-commission');
 const tradeCommOverride = document.getElementById('trade-commission-override');
 const tradeCommFormula  = document.getElementById('trade-commission-formula');
+const contractFields    = document.getElementById('contract-fields');
+const tradeMultiplier   = document.getElementById('trade-multiplier');
+const tradeStrike       = document.getElementById('trade-strike');
+const tradeExpiration   = document.getElementById('trade-expiration');
+const tradeUnderlying   = document.getElementById('trade-underlying');
 const totalPreview      = document.getElementById('total-preview');
 const cashWarning       = document.getElementById('cash-warning');
 const btnResetTrade     = document.getElementById('btn-reset-trade');
@@ -741,8 +746,18 @@ async function duplicateTrade(t) {
   tradeCommission.readOnly  = true;
   tradeCommission.classList.remove('editable');
 
+  // Carry the contract details across for option duplicates (strike/expiration
+  // describe the same contract; the user can adjust before submitting).
+  updateContractFields();       // show/seed fields for this trade type
+  if (isOptionType(t.trade_type)) {
+    if (t.multiplier)      tradeMultiplier.value = t.multiplier;
+    if (t.strike_price != null)   tradeStrike.value     = t.strike_price;
+    if (t.expiration_date)        tradeExpiration.value = t.expiration_date;
+    if (t.underlying)             tradeUnderlying.value = t.underlying;
+  }
+
   updateAddTradeCommission();   // recompute commission estimate + formula
-  updateTotalPreview();         // refresh the total preview from qty * price
+  updateTotalPreview();         // refresh the total preview from qty * price * multiplier
 
   addTradeForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
   tradeQuantity.focus();
@@ -798,11 +813,52 @@ document.getElementById('btn-export-csv').addEventListener('click', async () => 
   }
 });
 
+// ── Option / contract fields ───────────────────────────────────────────────────
+// Trade types that carry a standard 100x contract multiplier (matches the
+// backend's OPTION_TRADE_TYPES). Comparison is case-insensitive.
+const OPTION_TYPES = ['call', 'put'];
+const DEFAULT_OPTION_MULTIPLIER = 100;
+
+function isOptionType(name) {
+  return OPTION_TYPES.includes(String(name || '').toLowerCase());
+}
+
+// The multiplier currently in effect: the explicit field value when the contract
+// fields are showing, else 100 for Call/Put, else 1. Mirrors _resolve_multiplier.
+function effectiveMultiplier() {
+  if (!contractFields.classList.contains('hidden')) {
+    const m = parseFloat(tradeMultiplier.value);
+    if (m > 0) return m;
+  }
+  return isOptionType(tradeType.value) ? DEFAULT_OPTION_MULTIPLIER : 1;
+}
+
+// Show the contract fields for option types and default the multiplier to 100;
+// hide and clear them otherwise. Keeps total preview + cash warning in sync.
+function updateContractFields() {
+  if (isOptionType(tradeType.value)) {
+    contractFields.classList.remove('hidden');
+    if (!tradeMultiplier.value) tradeMultiplier.value = DEFAULT_OPTION_MULTIPLIER;
+  } else {
+    contractFields.classList.add('hidden');
+    tradeMultiplier.value = '';
+    tradeStrike.value = '';
+    tradeExpiration.value = '';
+    tradeUnderlying.value = '';
+  }
+  updateTotalPreview();
+  updateCashWarning();
+}
+
+tradeType.addEventListener('change', updateContractFields);
+tradeMultiplier.addEventListener('input', () => { updateTotalPreview(); updateCashWarning(); });
+
 // ── Total preview ─────────────────────────────────────────────────────────────
 function updateTotalPreview() {
   const qty   = parseFloat(tradeQuantity.value);
   const price = parseFloat(tradePrice.value);
-  totalPreview.textContent = (qty > 0 && price >= 0) ? formatCurrency(qty * price) : '—';
+  totalPreview.textContent =
+    (qty > 0 && price >= 0) ? formatCurrency(qty * price * effectiveMultiplier()) : '—';
 }
 tradeQuantity.addEventListener('input', updateTotalPreview);
 tradePrice.addEventListener('input', updateTotalPreview);
@@ -1112,7 +1168,7 @@ function updateCashWarning() {
   const qty   = parseFloat(tradeQuantity.value)   || 0;
   const price = parseFloat(tradePrice.value)      || 0;
   const comm  = parseFloat(tradeCommission.value) || 0;
-  const net   = qty * price + comm;
+  const net   = qty * price * effectiveMultiplier() + comm;
 
   if (net > formCashBalance) {
     const over = net - formCashBalance;
@@ -1163,6 +1219,8 @@ addTradeForm.addEventListener('submit', async (e) => {
     ticker:         ticker.toUpperCase(),
     trade_type:     tradeType.value,
     action:         tradeAction.value,
+    // The form opens positions: a buy opens a long, a sell opens a short.
+    direction:      tradeAction.value === 'sell' ? 'short' : 'long',
     quantity:       parseFloat(tradeQuantity.value),
     price_per_unit: parseFloat(tradePrice.value),
     trade_date:     tradeDate.value,
@@ -1174,6 +1232,18 @@ addTradeForm.addEventListener('submit', async (e) => {
   // auto-calculates from the broker.
   if (tradeCommOverride.checked) {
     payload.commission = parseFloat(tradeCommission.value) || 0;
+  }
+
+  // Contract details for option types. Multiplier is sent when explicitly set
+  // (otherwise the backend defaults it from the trade type); strike/expiration/
+  // underlying ride along when filled.
+  if (!contractFields.classList.contains('hidden')) {
+    const m = parseFloat(tradeMultiplier.value);
+    if (m > 0) payload.multiplier = m;
+    const strike = parseFloat(tradeStrike.value);
+    if (strike >= 0 && tradeStrike.value !== '') payload.strike_price = strike;
+    if (tradeExpiration.value) payload.expiration_date = tradeExpiration.value;
+    if (tradeUnderlying.value.trim()) payload.underlying = tradeUnderlying.value.trim().toUpperCase();
   }
 
   btnSubmitTrade.disabled = true;
@@ -1200,6 +1270,7 @@ function resetAddTradeForm() {
   tradeCommission.readOnly  = true;
   tradeCommission.classList.remove('editable');
   applyDefaultBroker();          // reset restores the default broker too
+  updateContractFields();        // hide/clear option fields for the (reset) type
   updateAddTradeCommission();
   clearError(addTradeError);
   hidePriceAutofillHint();
@@ -1733,15 +1804,15 @@ async function loadPositions() {
 
 // ── Helpers for price cells ────────────────────────────────────────────────────
 
-function _priceHtml(value) {
-  return value != null ? formatCurrency(value) : '<span class="price-na">—</span>';
+function _priceHtml(value, code) {
+  return value != null ? formatCurrencyIn(value, code) : '<span class="price-na">—</span>';
 }
 
-function _pnlHtml(value) {
+function _pnlHtml(value, code) {
   if (value == null) return '<span class="price-na">—</span>';
   const cls  = value >= 0 ? 'pnl-pos' : 'pnl-neg';
   const sign = value > 0 ? '+' : '';
-  return `<span class="${cls}">${sign}${formatCurrency(value)}</span>`;
+  return `<span class="${cls}">${sign}${formatCurrencyIn(value, code)}</span>`;
 }
 
 function _pnlPctHtml(value) {
@@ -1813,11 +1884,17 @@ function scopePositionToBroker(p, brokerId) {
   const lots = (p.lots || []).filter(l => l.broker_id === brokerId);
   if (!lots.length) return null;
   const round10 = x => Math.round(x * 1e10) / 1e10;
+  const mult  = p.multiplier || 1;   // contract multiplier (100 for options, else 1)
   const qty   = round10(lots.reduce((s, l) => s + l.remaining_quantity, 0));
-  const basis = round10(lots.reduce((s, l) => s + l.remaining_quantity * l.price_per_unit, 0));
+  // avg cost stays per-unit; basis and value fold in the multiplier (matches the backend).
+  const basis = round10(lots.reduce((s, l) => s + l.remaining_quantity * l.price_per_unit * (l.multiplier || mult), 0));
+  const rawCost = round10(lots.reduce((s, l) => s + l.remaining_quantity * l.price_per_unit, 0));
   const price = p.current_price;
-  const value = price != null ? round10(qty * price) : null;
-  const pnl   = value != null ? round10(value - basis) : null;
+  const value = price != null ? round10(qty * price * mult) : null;
+  // A short gains when the buy-back value falls below the proceeds (basis).
+  const pnl   = value != null
+    ? round10(p.direction === 'short' ? (basis - value) : (value - basis))
+    : null;
   const brokerName = brokerId != null
     ? (brokersById.get(brokerId)?.name ?? `Broker ${brokerId}`)
     : i18n.t('positions.no_broker');
@@ -1830,11 +1907,23 @@ function scopePositionToBroker(p, brokerId) {
     lots,
     total_remaining_quantity: qty,
     total_cost_basis:         basis,
-    avg_cost_per_unit:        qty ? round10(basis / qty) : 0,
+    avg_cost_per_unit:        qty ? round10(rawCost / qty) : 0,
     current_value:            value,
     unrealized_pnl:           pnl,
     unrealized_pnl_pct:       (pnl != null && basis) ? round10(pnl / basis * 100) : null,
   };
+}
+
+// "SHORT" pill shown next to the ticker on short positions.
+function shortBadgeHtml() {
+  return `<span class="short-badge">${escHtml(i18n.t('positions.short'))}</span>`;
+}
+
+// Currency pill shown when a position is held in a currency other than the
+// reporting currency, so the per-unit/native amounts aren't mistaken for base.
+function currencyTagHtml(code) {
+  if (!code || code === reportingCurrency()) return '';
+  return `<span class="currency-tag">${escHtml(code)}</span>`;
 }
 
 // Small broker chip (color dot + name) shown on broker-scoped position rows.
@@ -1955,17 +2044,20 @@ function renderPositionsRows(positions) {
       <td class="ticker-cell">
         ${exchangeBadge(p.exchange)}
         ${tickerLinkHtml(p.ticker, p.name)}
+        ${p.direction === 'short' ? shortBadgeHtml() : ''}
+        ${currencyTagHtml(p.currency)}
         ${p.broker_scoped ? brokerTagHtml(p.broker_name, p.broker_color) : ''}
       </td>
       <td>${badge(p.trade_type)}</td>
       <td class="num">${formatNumber(p.total_remaining_quantity)}</td>
-      <td class="num">${formatCurrency(p.avg_cost_per_unit)}</td>
-      <td class="num">${formatCurrency(p.total_cost_basis)}</td>
-      <td class="num price-col">${_priceHtml(p.current_price)}</td>
-      <td class="num price-col">${_priceHtml(p.current_value)}</td>
-      <td class="num price-col">${_pnlHtml(p.unrealized_pnl)}</td>
+      <td class="num">${formatCurrencyIn(p.avg_cost_per_unit, p.currency)}</td>
+      <td class="num">${formatCurrencyIn(p.total_cost_basis, p.currency)}</td>
+      <td class="num price-col">${_priceHtml(p.current_price, p.currency)}</td>
+      <td class="num price-col">${_priceHtml(p.current_value, p.currency)}</td>
+      <td class="num price-col">${_pnlHtml(p.unrealized_pnl, p.currency)}</td>
       <td class="num price-col">${_pnlPctHtml(p.unrealized_pnl_pct)}</td>
-      <td><button class="sell-btn">Sell</button></td>
+      <td><button class="sell-btn">${p.direction === 'short'
+            ? escHtml(i18n.t('positions.cover')) : escHtml(i18n.t('positions.sell'))}</button></td>
     `;
     if (p.broker_color) {
       tr.style.setProperty('--broker-color', p.broker_color);
@@ -2121,7 +2213,7 @@ function openSellModal(position) {
   sellPreviewBar.className = 'sell-preview-bar hidden';
   clearError(sellErrorEl);
   sellConfirmBtn.disabled    = false;
-  sellConfirmBtn.textContent = i18n.t('sell_form.confirm');
+  sellConfirmBtn.textContent = i18n.t(position.direction === 'short' ? 'sell_form.confirm_cover' : 'sell_form.confirm');
 
   sellModalOverlay.classList.remove('hidden');
   sellQtyInput.focus();
@@ -2136,16 +2228,16 @@ function closeSellModal() {
 // separate sell call, so the broker's flat fee applies once per lot touched and
 // the proportional buy commission is the lot's commission scaled by the share
 // of its original quantity being sold.
-function computeSellEstimate(lots, qtySold, sellPrice) {
+function computeSellEstimate(lots, qtySold, sellPrice, multiplier = 1, direction = 'long') {
   let remaining   = qtySold;
-  let costBasis   = 0;   // gross buy cost of the shares being sold
+  let costBasis   = 0;   // gross open value of the units being closed (× multiplier)
   let sellComm    = 0;   // estimated sell-side commission
   let buyCommProp = 0;   // proportional buy-side commission
 
   for (const lot of lots) {
     if (remaining <= 1e-9) break;
     const allocated = Math.min(lot.remaining_quantity, remaining);
-    costBasis += allocated * lot.price_per_unit;
+    costBasis += allocated * lot.price_per_unit * (lot.multiplier || multiplier);
     sellComm  += estimateCommission(getBroker(lot.broker_id), allocated);
     if (lot.quantity > 0) {
       buyCommProp += (allocated / lot.quantity) * (lot.commission || 0);
@@ -2153,14 +2245,16 @@ function computeSellEstimate(lots, qtySold, sellPrice) {
     remaining -= allocated;
   }
 
-  const proceeds    = qtySold * sellPrice;
-  const netProceeds = proceeds - sellComm;
-  const netCost     = costBasis + buyCommProp;
-  return {
-    proceeds, sellComm, costBasis, buyCommProp,
-    netProceeds, netCost,
-    netPnl: netProceeds - netCost,
-  };
+  // `cashFlow` is the gross trade value: proceeds you receive closing a long, or
+  // the buy-back cost you pay covering a short.
+  const cashFlow = qtySold * sellPrice * multiplier;
+  // Closing a long: P&L = (proceeds − sell comm) − (open cost + prop buy comm).
+  // Covering a short: lot.price_per_unit is the short-sale price, so costBasis is
+  // the open proceeds; P&L = (open proceeds − prop comm) − (buy-back cost + comm).
+  const netPnl = direction === 'short'
+    ? (costBasis - buyCommProp) - (cashFlow + sellComm)
+    : (cashFlow - sellComm) - (costBasis + buyCommProp);
+  return { proceeds: cashFlow, sellComm, costBasis, buyCommProp, netPnl };
 }
 
 function updateSellPreview() {
@@ -2172,11 +2266,16 @@ function updateSellPreview() {
     return;
   }
 
-  const est  = computeSellEstimate(currentSellPosition.lots, qty, price);
+  const isShort = currentSellPosition.direction === 'short';
+  const est  = computeSellEstimate(
+    currentSellPosition.lots, qty, price,
+    currentSellPosition.multiplier || 1, currentSellPosition.direction || 'long'
+  );
   const sign = est.netPnl >= 0 ? '+' : '';
+  const grossLabel = isShort ? i18n.t('sell_form.cost_label') : i18n.t('sell_form.proceeds_label');
 
   sellPreviewBar.innerHTML =
-    `<div class="sell-preview-line"><span>${escHtml(i18n.t('sell_form.proceeds_label'))}</span><span>${formatCurrency(est.proceeds)}</span></div>` +
+    `<div class="sell-preview-line"><span>${escHtml(grossLabel)}</span><span>${formatCurrency(est.proceeds)}</span></div>` +
     `<div class="sell-preview-line"><span>${escHtml(i18n.t('sell_form.commission_label'))}</span><span>−${formatCurrency(est.sellComm)}</span></div>` +
     `<div class="sell-preview-line sell-preview-total"><span>${escHtml(i18n.t('sell_form.net_pnl_label'))}</span>` +
       `<span>${sign}${formatCurrency(est.netPnl)}</span></div>`;
@@ -2226,28 +2325,28 @@ sellConfirmBtn.addEventListener('click', async () => {
     toSell -= allocated;
   }
 
+  const isShort = currentSellPosition.direction === 'short';
   sellConfirmBtn.disabled    = true;
-  sellConfirmBtn.textContent = i18n.t('sell_form.selling');
+  sellConfirmBtn.textContent = i18n.t(isShort ? 'sell_form.covering' : 'sell_form.selling');
 
   try {
     for (const alloc of allocations) {
-      await apiFetch(`/trades/${alloc.tradeId}/sell`, {
-        method: 'POST',
-        body: JSON.stringify({
-          quantity_sold:       alloc.qty,
-          sell_price_per_unit: price,
-          sell_date:           date,
-          notes,
-        }),
-      });
+      // Closing a long sells against the buy lot; closing a short covers it.
+      const path = isShort
+        ? `/trades/${alloc.tradeId}/cover`
+        : `/trades/${alloc.tradeId}/sell`;
+      const body = isShort
+        ? { quantity_covered: alloc.qty, cover_price_per_unit: price, cover_date: date, notes }
+        : { quantity_sold:    alloc.qty, sell_price_per_unit:  price, sell_date:  date, notes };
+      await apiFetch(path, { method: 'POST', body: JSON.stringify(body) });
     }
     closeSellModal();
-    showToast(i18n.t('sell_form.recorded'));
+    showToast(i18n.t(isShort ? 'sell_form.covered' : 'sell_form.recorded'));
     loadPositions(); // refreshes both positions table and cash balance
   } catch (e) {
     showError(sellErrorEl, e.message);
     sellConfirmBtn.disabled    = false;
-    sellConfirmBtn.textContent = i18n.t('sell_form.confirm');
+    sellConfirmBtn.textContent = i18n.t(isShort ? 'sell_form.confirm_cover' : 'sell_form.confirm');
   }
 });
 
