@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:8765; font-src 'self';" />
   <title>TradeNexus</title>
   <link rel="stylesheet" href="static/css/style.css" />
   <script>
@@ -886,10 +887,10 @@
 
   <div id="toast" class="hidden"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="static/js/vendor/chart.umd.js"></script>
+  <script src="static/js/vendor/chartjs-adapter-date-fns.bundle.min.js"></script>
   <script src="static/js/formatting.js"></script>
-  <script src="i18n.js"></script>
+  <script src="static/js/i18n.js"></script>
   <script src="static/js/app.js"></script>
 </body>
 </html>

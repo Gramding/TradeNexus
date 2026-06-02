@@ -136,9 +136,19 @@ function showToast(msg, isError = false) {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.className = isError ? 'error' : '';
+  el.classList.remove('hidden');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.add('hidden'), 3500);
 }
+
+window.addEventListener('unhandledrejection', (event) => {
+  const msg = event.reason?.message || 'Unexpected error';
+  console.error('Unhandled rejection:', event.reason);
+  showToast(msg, true);
+});
+window.addEventListener('error', (event) => {
+  console.error('Uncaught error:', event.error || event.message);
+});
 
 // ── Inline errors ─────────────────────────────────────────────────────────────
 function showError(el, msg) {
