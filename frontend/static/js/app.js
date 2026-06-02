@@ -1209,6 +1209,8 @@ addTradeForm.addEventListener('submit', async (e) => {
     ticker:         ticker.toUpperCase(),
     trade_type:     tradeType.value,
     action:         tradeAction.value,
+    // The form opens positions: a buy opens a long, a sell opens a short.
+    direction:      tradeAction.value === 'sell' ? 'short' : 'long',
     quantity:       parseFloat(tradeQuantity.value),
     price_per_unit: parseFloat(tradePrice.value),
     trade_date:     tradeDate.value,
@@ -1879,7 +1881,10 @@ function scopePositionToBroker(p, brokerId) {
   const rawCost = round10(lots.reduce((s, l) => s + l.remaining_quantity * l.price_per_unit, 0));
   const price = p.current_price;
   const value = price != null ? round10(qty * price * mult) : null;
-  const pnl   = value != null ? round10(value - basis) : null;
+  // A short gains when the buy-back value falls below the proceeds (basis).
+  const pnl   = value != null
+    ? round10(p.direction === 'short' ? (basis - value) : (value - basis))
+    : null;
   const brokerName = brokerId != null
     ? (brokersById.get(brokerId)?.name ?? `Broker ${brokerId}`)
     : i18n.t('positions.no_broker');
@@ -1897,6 +1902,11 @@ function scopePositionToBroker(p, brokerId) {
     unrealized_pnl:           pnl,
     unrealized_pnl_pct:       (pnl != null && basis) ? round10(pnl / basis * 100) : null,
   };
+}
+
+// "SHORT" pill shown next to the ticker on short positions.
+function shortBadgeHtml() {
+  return `<span class="short-badge">${escHtml(i18n.t('positions.short'))}</span>`;
 }
 
 // Small broker chip (color dot + name) shown on broker-scoped position rows.
@@ -2017,6 +2027,7 @@ function renderPositionsRows(positions) {
       <td class="ticker-cell">
         ${exchangeBadge(p.exchange)}
         ${tickerLinkHtml(p.ticker, p.name)}
+        ${p.direction === 'short' ? shortBadgeHtml() : ''}
         ${p.broker_scoped ? brokerTagHtml(p.broker_name, p.broker_color) : ''}
       </td>
       <td>${badge(p.trade_type)}</td>
@@ -2027,7 +2038,8 @@ function renderPositionsRows(positions) {
       <td class="num price-col">${_priceHtml(p.current_value)}</td>
       <td class="num price-col">${_pnlHtml(p.unrealized_pnl)}</td>
       <td class="num price-col">${_pnlPctHtml(p.unrealized_pnl_pct)}</td>
-      <td><button class="sell-btn">Sell</button></td>
+      <td><button class="sell-btn">${p.direction === 'short'
+            ? escHtml(i18n.t('positions.cover')) : escHtml(i18n.t('positions.sell'))}</button></td>
     `;
     if (p.broker_color) {
       tr.style.setProperty('--broker-color', p.broker_color);
@@ -2183,7 +2195,7 @@ function openSellModal(position) {
   sellPreviewBar.className = 'sell-preview-bar hidden';
   clearError(sellErrorEl);
   sellConfirmBtn.disabled    = false;
-  sellConfirmBtn.textContent = i18n.t('sell_form.confirm');
+  sellConfirmBtn.textContent = i18n.t(position.direction === 'short' ? 'sell_form.confirm_cover' : 'sell_form.confirm');
 
   sellModalOverlay.classList.remove('hidden');
   sellQtyInput.focus();
@@ -2198,9 +2210,9 @@ function closeSellModal() {
 // separate sell call, so the broker's flat fee applies once per lot touched and
 // the proportional buy commission is the lot's commission scaled by the share
 // of its original quantity being sold.
-function computeSellEstimate(lots, qtySold, sellPrice, multiplier = 1) {
+function computeSellEstimate(lots, qtySold, sellPrice, multiplier = 1, direction = 'long') {
   let remaining   = qtySold;
-  let costBasis   = 0;   // gross buy cost of the units being sold (× multiplier)
+  let costBasis   = 0;   // gross open value of the units being closed (× multiplier)
   let sellComm    = 0;   // estimated sell-side commission
   let buyCommProp = 0;   // proportional buy-side commission
 
@@ -2215,14 +2227,16 @@ function computeSellEstimate(lots, qtySold, sellPrice, multiplier = 1) {
     remaining -= allocated;
   }
 
-  const proceeds    = qtySold * sellPrice * multiplier;
-  const netProceeds = proceeds - sellComm;
-  const netCost     = costBasis + buyCommProp;
-  return {
-    proceeds, sellComm, costBasis, buyCommProp,
-    netProceeds, netCost,
-    netPnl: netProceeds - netCost,
-  };
+  // `cashFlow` is the gross trade value: proceeds you receive closing a long, or
+  // the buy-back cost you pay covering a short.
+  const cashFlow = qtySold * sellPrice * multiplier;
+  // Closing a long: P&L = (proceeds − sell comm) − (open cost + prop buy comm).
+  // Covering a short: lot.price_per_unit is the short-sale price, so costBasis is
+  // the open proceeds; P&L = (open proceeds − prop comm) − (buy-back cost + comm).
+  const netPnl = direction === 'short'
+    ? (costBasis - buyCommProp) - (cashFlow + sellComm)
+    : (cashFlow - sellComm) - (costBasis + buyCommProp);
+  return { proceeds: cashFlow, sellComm, costBasis, buyCommProp, netPnl };
 }
 
 function updateSellPreview() {
@@ -2234,11 +2248,16 @@ function updateSellPreview() {
     return;
   }
 
-  const est  = computeSellEstimate(currentSellPosition.lots, qty, price, currentSellPosition.multiplier || 1);
+  const isShort = currentSellPosition.direction === 'short';
+  const est  = computeSellEstimate(
+    currentSellPosition.lots, qty, price,
+    currentSellPosition.multiplier || 1, currentSellPosition.direction || 'long'
+  );
   const sign = est.netPnl >= 0 ? '+' : '';
+  const grossLabel = isShort ? i18n.t('sell_form.cost_label') : i18n.t('sell_form.proceeds_label');
 
   sellPreviewBar.innerHTML =
-    `<div class="sell-preview-line"><span>${escHtml(i18n.t('sell_form.proceeds_label'))}</span><span>${formatCurrency(est.proceeds)}</span></div>` +
+    `<div class="sell-preview-line"><span>${escHtml(grossLabel)}</span><span>${formatCurrency(est.proceeds)}</span></div>` +
     `<div class="sell-preview-line"><span>${escHtml(i18n.t('sell_form.commission_label'))}</span><span>−${formatCurrency(est.sellComm)}</span></div>` +
     `<div class="sell-preview-line sell-preview-total"><span>${escHtml(i18n.t('sell_form.net_pnl_label'))}</span>` +
       `<span>${sign}${formatCurrency(est.netPnl)}</span></div>`;
@@ -2288,28 +2307,28 @@ sellConfirmBtn.addEventListener('click', async () => {
     toSell -= allocated;
   }
 
+  const isShort = currentSellPosition.direction === 'short';
   sellConfirmBtn.disabled    = true;
-  sellConfirmBtn.textContent = i18n.t('sell_form.selling');
+  sellConfirmBtn.textContent = i18n.t(isShort ? 'sell_form.covering' : 'sell_form.selling');
 
   try {
     for (const alloc of allocations) {
-      await apiFetch(`/trades/${alloc.tradeId}/sell`, {
-        method: 'POST',
-        body: JSON.stringify({
-          quantity_sold:       alloc.qty,
-          sell_price_per_unit: price,
-          sell_date:           date,
-          notes,
-        }),
-      });
+      // Closing a long sells against the buy lot; closing a short covers it.
+      const path = isShort
+        ? `/trades/${alloc.tradeId}/cover`
+        : `/trades/${alloc.tradeId}/sell`;
+      const body = isShort
+        ? { quantity_covered: alloc.qty, cover_price_per_unit: price, cover_date: date, notes }
+        : { quantity_sold:    alloc.qty, sell_price_per_unit:  price, sell_date:  date, notes };
+      await apiFetch(path, { method: 'POST', body: JSON.stringify(body) });
     }
     closeSellModal();
-    showToast(i18n.t('sell_form.recorded'));
+    showToast(i18n.t(isShort ? 'sell_form.covered' : 'sell_form.recorded'));
     loadPositions(); // refreshes both positions table and cash balance
   } catch (e) {
     showError(sellErrorEl, e.message);
     sellConfirmBtn.disabled    = false;
-    sellConfirmBtn.textContent = i18n.t('sell_form.confirm');
+    sellConfirmBtn.textContent = i18n.t(isShort ? 'sell_form.confirm_cover' : 'sell_form.confirm');
   }
 });
 

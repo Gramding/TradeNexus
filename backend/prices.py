@@ -131,14 +131,17 @@ def get_positions_with_prices(
 
         # JOIN instruments so each position carries its Yahoo symbol; prices are
         # fetched by symbol while the display ticker is shown to the user.
+        # Open lots: long opens (buy/long) and short opens (sell/short). Synthetic
+        # close rows are status='closed' and excluded.
         cur.execute(
             "SELECT t.id, t.ticker, t.trade_type, t.trade_date, t.remaining_quantity, "
             "t.price_per_unit, t.status, t.broker_id, b.color, t.quantity, t.commission, "
-            "i.symbol, i.name, i.exchange, i.asset_class, i.id, t.multiplier "
+            "i.symbol, i.name, i.exchange, i.asset_class, i.id, t.multiplier, t.direction "
             "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
             "LEFT JOIN instruments i ON t.instrument_id = i.id "
-            "WHERE t.user_id = ? AND t.action = 'buy' AND t.status IN ('open', 'partial') "
-            "ORDER BY t.ticker, t.trade_type, t.trade_date, t.id",
+            "WHERE t.user_id = ? AND t.status IN ('open', 'partial') "
+            "AND ((t.action = 'buy' AND t.direction = 'long') OR (t.action = 'sell' AND t.direction = 'short')) "
+            "ORDER BY t.ticker, t.trade_type, t.direction, t.trade_date, t.id",
             (user_id,),
         )
         rows = cur.fetchall()
@@ -148,11 +151,12 @@ def get_positions_with_prices(
         for (trade_id, ticker, trade_type, trade_date, remaining_qty, price_per_unit,
              status, broker_id, broker_color, orig_quantity, buy_commission,
              instr_symbol, instr_name, instr_exchange, instr_asset_class, instr_id,
-             multiplier) in rows:
+             multiplier, direction) in rows:
             remaining_qty  = float(remaining_qty)
             price_per_unit = float(price_per_unit)
             multiplier     = float(multiplier) if multiplier is not None else 1.0
-            key = (ticker, trade_type)
+            direction      = direction or "long"
+            key = (ticker, trade_type, direction)
             if key not in groups:
                 groups[key] = {
                     "ticker":                   ticker,
@@ -162,6 +166,7 @@ def get_positions_with_prices(
                     "exchange":                 instr_exchange,
                     "asset_class":              instr_asset_class,
                     "trade_type":               trade_type,
+                    "direction":                direction,
                     "multiplier":               multiplier,
                     "total_remaining_quantity": 0.0,
                     "total_raw_cost":           0.0,
@@ -225,9 +230,17 @@ def get_positions_with_prices(
 
             current_price = price_data["price"] if price_data else None
 
+            direction = g["direction"]
             if current_price is not None:
+                # current_value is the live market value of the units (the cost to
+                # buy back, for a short). A long gains when value rises above its
+                # cost basis; a short gains when the buy-back value falls below the
+                # proceeds it received (cost_basis).
                 current_value    = round(total_qty * current_price * multiplier, 10)
-                unrealized_pnl   = round(current_value - cost_basis, 10)
+                unrealized_pnl   = round(
+                    (cost_basis - current_value) if direction == "short"
+                    else (current_value - cost_basis), 10
+                )
                 unrealized_pnl_pct = (
                     round(unrealized_pnl / cost_basis * 100, 4)
                     if cost_basis != 0 else None
@@ -244,6 +257,7 @@ def get_positions_with_prices(
                 "exchange":                 g["exchange"],
                 "asset_class":              g["asset_class"],
                 "trade_type":               g["trade_type"],
+                "direction":                direction,
                 "multiplier":               multiplier,
                 "total_remaining_quantity": total_qty,
                 "avg_cost_per_unit":        avg_cost,

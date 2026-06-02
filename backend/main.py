@@ -55,6 +55,7 @@ app.add_middleware(
 )
 
 ACTIONS = {"buy", "sell"}
+DIRECTIONS = {"long", "short"}
 
 
 def _normalize_trade_type(cur: sqlite3.Cursor, value: str) -> str:
@@ -274,11 +275,11 @@ def _require_trade(cur: sqlite3.Cursor, trade_id: int) -> tuple:
     # Columns: 0=id 1=user_id 2=ticker 3=trade_type 4=action 5=quantity
     #          6=price_per_unit 7=total_value 8=trade_date 9=notes 10=created_at
     #          11=status 12=remaining_quantity 13=broker_id 14=commission 15=multiplier
-    #          16=strike_price 17=expiration_date 18=underlying
+    #          16=strike_price 17=expiration_date 18=underlying 19=direction
     cur.execute(
         "SELECT id, user_id, ticker, trade_type, action, quantity, price_per_unit, "
         "total_value, trade_date, notes, created_at, status, remaining_quantity, broker_id, "
-        "commission, multiplier, strike_price, expiration_date, underlying "
+        "commission, multiplier, strike_price, expiration_date, underlying, direction "
         "FROM trades WHERE id = ?",
         (trade_id,),
     )
@@ -324,6 +325,7 @@ class TradeCreate(BaseModel):
     strike_price: Optional[float] = None     # options only
     expiration_date: Optional[datetime.date] = None  # options only
     underlying: Optional[str] = None         # options only, e.g. "AAPL"
+    direction: Optional[str] = None      # long (buy-to-open) or short (sell-to-open); inferred from action if omitted
 
 
 class TradeUpdate(BaseModel):
@@ -348,6 +350,15 @@ class SellLotCreate(BaseModel):
     sell_date: datetime.date
     notes: Optional[str] = None
     commission: Optional[float] = None  # None = auto-calc from the buy trade's broker
+
+
+class CoverCreate(BaseModel):
+    """Buy-to-close against an open short lot."""
+    quantity_covered: float
+    cover_price_per_unit: float
+    cover_date: datetime.date
+    notes: Optional[str] = None
+    commission: Optional[float] = None  # None = auto-calc from the short trade's broker
 
 
 class CashTransaction(BaseModel):
@@ -567,6 +578,21 @@ def create_trade(user_id: int, body: TradeCreate):
     if body.strike_price is not None and body.strike_price < 0:
         raise HTTPException(status_code=422, detail="strike_price must be >= 0.")
 
+    # An opening trade's direction is inferred from its action (buy = long,
+    # sell = short to open) unless explicitly given, in which case the two must
+    # agree. Closing a position is done via the /sell and /cover endpoints, not
+    # here, so create_trade only ever opens a long or a short.
+    inferred_direction = "long" if body.action == "buy" else "short"
+    direction = (body.direction or inferred_direction)
+    if direction not in DIRECTIONS:
+        raise HTTPException(status_code=422, detail=f"direction must be one of: {', '.join(sorted(DIRECTIONS))}.")
+    if direction != inferred_direction:
+        raise HTTPException(
+            status_code=422,
+            detail="direction must be 'long' for a buy and 'short' for a sell. "
+                   "Close existing positions with the sell/cover actions.",
+        )
+
     conn = _db()
     try:
         cur = conn.cursor()
@@ -592,25 +618,34 @@ def create_trade(user_id: int, body: TradeCreate):
             "INSERT INTO trades "
             "(user_id, broker_id, instrument_id, ticker, trade_type, action, quantity, price_per_unit, "
             "total_value, trade_date, notes, remaining_quantity, commission, net_total_value, "
-            "multiplier, strike_price, expiration_date, underlying) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "multiplier, strike_price, expiration_date, underlying, direction) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user_id, body.broker_id, body.instrument_id, body.ticker.strip().upper(),
                 trade_type, body.action, body.quantity, body.price_per_unit, total_value,
                 body.trade_date.isoformat(), body.notes, body.quantity,
                 commission, net_total_value,
-                multiplier, body.strike_price, expiration, underlying,
+                multiplier, body.strike_price, expiration, underlying, direction,
             ),
         )
         trade_id = cur.lastrowid
 
         if body.action == "buy":
-            # Deduct the commission-inclusive net so the cash pool matches what the
-            # broker actually debits (gross cost + commission).
+            # Long open: deduct the commission-inclusive net so the cash pool matches
+            # what the broker actually debits (gross cost + commission).
             cur.execute(
                 "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
                 "VALUES (?, 'buy_deduction', ?, ?)",
                 (user_id, -net_total_value, trade_id),
+            )
+        else:
+            # Short open (sell-to-open): credit the proceeds net of commission, as the
+            # broker deposits the sale proceeds into the account. The liability to buy
+            # the shares back is tracked by the open short lot, not the cash pool.
+            cur.execute(
+                "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
+                "VALUES (?, 'sell_proceeds', ?, ?)",
+                (user_id, net_total_value, trade_id),
             )
 
         conn.commit()
@@ -700,16 +735,25 @@ def update_trade(trade_id: int, body: TradeUpdate):
              commission, net_total_value, multiplier, strike_price, expiration_date, underlying, trade_id),
         )
 
-        # Keep the cash pool in sync with the edit: drop this trade's old buy
-        # deduction and, if it is (still) a buy, re-insert one for the new net total.
-        # Sell cash rows are keyed to sell lots rather than the trade, so they are
-        # left untouched here.
+        # Keep the cash pool in sync with the edit. An opening trade has exactly one
+        # cash row keyed by its trade_id: a long open's buy_deduction (negative) or a
+        # short open's sell_proceeds (positive). Drop and re-insert that one row for
+        # the new net total. Close-side cash rows are keyed by sell-lot id and left
+        # untouched. The row type follows the trade's direction (not editable here),
+        # so the delete stays scoped to this trade's own open-side row.
+        direction = existing[19] or "long"
+        open_cash_type = "sell_proceeds" if direction == "short" else "buy_deduction"
         cur.execute(
-            "DELETE FROM cash_pool WHERE transaction_type = 'buy_deduction' "
-            "AND reference_id = ?",
-            (trade_id,),
+            "DELETE FROM cash_pool WHERE transaction_type = ? AND reference_id = ?",
+            (open_cash_type, trade_id),
         )
-        if action == "buy":
+        if direction == "short":
+            cur.execute(
+                "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
+                "VALUES (?, 'sell_proceeds', ?, ?)",
+                (existing[1], net_total_value, trade_id),
+            )
+        else:
             cur.execute(
                 "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
                 "VALUES (?, 'buy_deduction', ?, ?)",
@@ -741,7 +785,9 @@ def delete_trade(trade_id: int):
 
         # Remove dependent rows before the trade itself, so the sell_lots -> trades
         # foreign key doesn't block the delete, and reverse this trade's cash-pool
-        # effects so the balance stays correct.
+        # effects so the balance stays correct. This handles both long opens (closed
+        # by sells) and short opens (closed by covers): the close ledger lives in
+        # sell_lots keyed by this opening trade's id either way.
         sell_lot_ids = [
             r[0] for r in cur.execute(
                 "SELECT id FROM sell_lots WHERE buy_trade_id = ?", (trade_id,)
@@ -749,19 +795,22 @@ def delete_trade(trade_id: int):
         ]
         if sell_lot_ids:
             placeholders = ",".join("?" * len(sell_lot_ids))
-            # sell_proceeds cash rows reference the sell_lot id.
+            # Close-side cash rows reference the sell_lot id: sell_proceeds when a
+            # long was sold, buy_deduction when a short was covered.
             cur.execute(
-                f"DELETE FROM cash_pool WHERE transaction_type = 'sell_proceeds' "
-                f"AND reference_id IN ({placeholders})",
+                f"DELETE FROM cash_pool WHERE reference_id IN ({placeholders}) "
+                f"AND transaction_type IN ('sell_proceeds', 'buy_deduction')",
                 sell_lot_ids,
             )
             cur.execute("DELETE FROM sell_lots WHERE buy_trade_id = ?", (trade_id,))
 
-        # The buy's cash deduction references the trade id (no-op for sell rows).
+        # The opening trade's own cash row references the trade id: a long open's
+        # buy_deduction or a short open's sell_proceeds.
+        direction = existing[19] or "long"
+        open_cash_type = "sell_proceeds" if direction == "short" else "buy_deduction"
         cur.execute(
-            "DELETE FROM cash_pool WHERE transaction_type = 'buy_deduction' "
-            "AND reference_id = ?",
-            (trade_id,),
+            "DELETE FROM cash_pool WHERE transaction_type = ? AND reference_id = ?",
+            (open_cash_type, trade_id),
         )
 
         cur.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
@@ -902,6 +951,124 @@ def sell_trade(buy_trade_id: int, body: SellLotCreate):
     return _row_to_sell_lot(row)
 
 
+@app.post("/trades/{short_trade_id}/cover", status_code=201)
+def cover_trade(short_trade_id: int, body: CoverCreate):
+    """Buy-to-close against an open short lot — the mirror image of sell_trade.
+
+    Realized P&L for a short is the open proceeds (what you received selling the
+    borrowed shares) minus the cost to buy them back, both net of commission, so
+    a lower cover price is a profit. Proceeds, cost, and basis all carry the
+    contract multiplier. The close is recorded in sell_lots (the shared realized-
+    P&L ledger) keyed by the short opening trade's id."""
+    if body.quantity_covered <= 0:
+        raise HTTPException(status_code=422, detail="quantity_covered must be greater than 0.")
+    if body.cover_price_per_unit < 0:
+        raise HTTPException(status_code=422, detail="cover_price_per_unit must be >= 0.")
+    if body.commission is not None and body.commission < 0:
+        raise HTTPException(status_code=422, detail="commission must be >= 0.")
+
+    conn = _db()
+    try:
+        cur = conn.cursor()
+        trade = _require_trade(cur, short_trade_id)
+        # indices: 4=action 5=quantity 6=price_per_unit 12=remaining_quantity
+        #          13=broker_id 14=commission 15=multiplier 19=direction
+        if not (trade[4] == "sell" and (trade[19] or "long") == "short"):
+            raise HTTPException(status_code=400, detail="Trade is not an open short position.")
+
+        original_quantity = float(trade[5])
+        open_price        = float(trade[6])
+        short_broker_id   = trade[13]
+        open_commission   = float(trade[14] or 0)
+        multiplier        = float(trade[15]) if trade[15] is not None else 1.0
+
+        remaining = float(trade[12]) if trade[12] is not None else original_quantity
+        if body.quantity_covered > remaining:
+            raise HTTPException(
+                status_code=400,
+                detail=f"quantity_covered ({body.quantity_covered}) exceeds remaining_quantity ({remaining}).",
+            )
+
+        # Cost to buy the shares back, the open proceeds attributable to this slice,
+        # and both commission legs. Profit when the open price beat the cover price.
+        cover_cost      = round(body.quantity_covered * body.cover_price_per_unit * multiplier, 10)
+        cover_commission = _compute_commission(cur, short_broker_id, body.quantity_covered, body.commission)
+        prop_open_commission = round(
+            (body.quantity_covered / original_quantity) * open_commission, 10
+        ) if original_quantity else 0.0
+        open_proceeds_for_lot = body.quantity_covered * open_price * multiplier
+        realized_pnl = round(
+            (open_proceeds_for_lot - prop_open_commission) - (cover_cost + cover_commission), 10
+        )
+
+        # Record the close in sell_lots. proceeds stores the buy-back cost here;
+        # realized_pnl is the field stats reads, and it is already short-correct.
+        cur.execute(
+            "INSERT INTO sell_lots "
+            "(buy_trade_id, sell_date, quantity_sold, sell_price_per_unit, proceeds, realized_pnl, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                short_trade_id, body.cover_date.isoformat(),
+                body.quantity_covered, body.cover_price_per_unit,
+                cover_cost, realized_pnl, body.notes,
+            ),
+        )
+        cover_lot_id = cur.lastrowid
+
+        new_remaining = round(remaining - body.quantity_covered, 10)
+        new_status = "closed" if new_remaining == 0 else "partial"
+        cur.execute(
+            "UPDATE trades SET remaining_quantity = ?, status = ? WHERE id = ?",
+            (new_remaining, new_status, short_trade_id),
+        )
+
+        # Synthetic buy-to-close trade so the cover shows in the Trades tab. It is a
+        # buy that nets MORE cash out (cost + commission), and carries direction
+        # 'short' so it is never mistaken for a long open by the positions queries.
+        cover_net_total = round(cover_cost + cover_commission, 10)
+        cur.execute(
+            "INSERT INTO trades "
+            "(user_id, broker_id, ticker, trade_type, action, quantity, price_per_unit, "
+            "total_value, trade_date, notes, status, remaining_quantity, commission, net_total_value, "
+            "multiplier, direction) "
+            "VALUES (?, ?, ?, ?, 'buy', ?, ?, ?, ?, ?, 'closed', 0, ?, ?, ?, 'short')",
+            (
+                trade[1], trade[13], trade[2], trade[3],
+                body.quantity_covered, body.cover_price_per_unit, cover_cost,
+                body.cover_date.isoformat(), body.notes, cover_commission, cover_net_total,
+                multiplier,
+            ),
+        )
+
+        # Debit the buy-back cost (net of commission) from the cash pool, keyed to
+        # the cover lot id (mirrors how a long sell credits sell_proceeds).
+        cur.execute(
+            "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
+            "VALUES (?, 'buy_deduction', ?, ?)",
+            (trade[1], -cover_net_total, cover_lot_id),
+        )
+
+        conn.commit()
+        stats_cache.invalidate(trade[1])
+
+        cur.execute(
+            "SELECT id, buy_trade_id, sell_date, quantity_sold, sell_price_per_unit, "
+            "proceeds, realized_pnl, notes, created_at FROM sell_lots WHERE id = ?",
+            (cover_lot_id,),
+        )
+        row = cur.fetchone()
+    except HTTPException:
+        raise
+    except sqlite3.Error as exc:
+        conn.rollback()
+        logger.error("cover_trade DB error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to record cover lot.")
+    finally:
+        conn.close()
+
+    return _row_to_sell_lot(row)
+
+
 # ---------------------------------------------------------------------------
 # Positions
 # ---------------------------------------------------------------------------
@@ -912,11 +1079,15 @@ def get_positions(user_id: int):
     try:
         cur = conn.cursor()
         _require_user(cur, user_id)
+        # Open lots are long opens (buy/long) and short opens (sell/short). The
+        # synthetic close rows are status='closed' and never match.
         cur.execute(
-            "SELECT id, ticker, trade_type, trade_date, remaining_quantity, price_per_unit, status, multiplier "
+            "SELECT id, ticker, trade_type, trade_date, remaining_quantity, price_per_unit, status, "
+            "multiplier, direction "
             "FROM trades "
-            "WHERE user_id = ? AND action = 'buy' AND status IN ('open', 'partial') "
-            "ORDER BY ticker, trade_type, trade_date, id",
+            "WHERE user_id = ? AND status IN ('open', 'partial') "
+            "AND ((action = 'buy' AND direction = 'long') OR (action = 'sell' AND direction = 'short')) "
+            "ORDER BY ticker, trade_type, direction, trade_date, id",
             (user_id,),
         )
         rows = cur.fetchall()
@@ -928,19 +1099,22 @@ def get_positions(user_id: int):
     finally:
         conn.close()
 
-    # Group by (ticker, trade_type) in insertion order. avg_cost_per_unit stays the
-    # raw price-weighted average (comparable to a quote); total_cost_basis folds in
-    # the contract multiplier so it is in real dollars for options.
+    # Group by (ticker, trade_type, direction) so a long and a short on the same
+    # ticker stay separate. avg_cost_per_unit stays the raw price-weighted average
+    # (comparable to a quote); total_cost_basis folds in the contract multiplier.
     groups: dict[tuple, dict] = {}
-    for trade_id, ticker, trade_type, trade_date, remaining_qty, price_per_unit, status, multiplier in rows:
+    for (trade_id, ticker, trade_type, trade_date, remaining_qty, price_per_unit,
+         status, multiplier, direction) in rows:
         remaining_qty = float(remaining_qty)
         price_per_unit = float(price_per_unit)
         multiplier = float(multiplier) if multiplier is not None else 1.0
-        key = (ticker, trade_type)
+        direction = direction or "long"
+        key = (ticker, trade_type, direction)
         if key not in groups:
             groups[key] = {
                 "ticker": ticker,
                 "trade_type": trade_type,
+                "direction": direction,
                 "multiplier": multiplier,
                 "total_remaining_quantity": 0.0,
                 "total_raw_cost": 0.0,
@@ -966,9 +1140,12 @@ def get_positions(user_id: int):
         positions.append({
             "ticker": g["ticker"],
             "trade_type": g["trade_type"],
+            "direction": g["direction"],
             "multiplier": g["multiplier"],
             "total_remaining_quantity": round(total_qty, 10),
             "avg_cost_per_unit": round(g["total_raw_cost"] / total_qty, 10) if total_qty else 0.0,
+            # For a short, this is the proceeds received (the basis to compare a
+            # buy-back against); for a long, the amount invested.
             "total_cost_basis": round(g["total_cost_basis"], 10),
             "lots": g["lots"],
         })

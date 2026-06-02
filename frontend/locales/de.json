@@ -117,7 +117,10 @@
     "multiplier_hint": "Anteile pro Kontrakt. Standard-US-Aktienoptionen sind 100.",
     "strike": "Basispreis ($)",
     "expiration": "Verfall",
-    "underlying": "Basiswert"
+    "underlying": "Basiswert",
+    "open_long": "Kaufen (Long)",
+    "open_short": "Leerverkauf",
+    "action_hint": "Position eröffnen. Schließen Sie sie später im Tab Positionen."
   },
   "positions": {
     "title": "Positionen",
@@ -149,7 +152,9 @@
     "sell": "Verkaufen",
     "price_unavailable": "Preis nicht verfügbar",
     "refresh_failed": "Preisaktualisierung fehlgeschlagen: {error}",
-    "reload_failed": "Positionen konnten nicht neu geladen werden: {error}"
+    "reload_failed": "Positionen konnten nicht neu geladen werden: {error}",
+    "cover": "Eindecken",
+    "short": "SHORT"
   },
   "sell_form": {
     "title": "{ticker} verkaufen",
@@ -173,7 +178,11 @@
     "commission_label": "Geschätzte Provision",
     "net_pnl_label": "Netto-G/V",
     "selling": "Wird verkauft…",
-    "max_hint": "max. {n}"
+    "max_hint": "max. {n}",
+    "cost_label": "Rückkaufkosten",
+    "covering": "Eindecken…",
+    "covered": "Short eingedeckt.",
+    "confirm_cover": "Eindecken bestätigen"
   },
   "analytics": {
     "title": "Analysen",

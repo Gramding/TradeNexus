@@ -117,7 +117,10 @@
     "multiplier_hint": "Shares per contract. Standard US equity options are 100.",
     "strike": "Strike price ($)",
     "expiration": "Expiration",
-    "underlying": "Underlying"
+    "underlying": "Underlying",
+    "open_long": "Buy (long)",
+    "open_short": "Sell short",
+    "action_hint": "Open a position. Close it later from the Positions tab."
   },
   "positions": {
     "title": "Positions",
@@ -149,7 +152,9 @@
     "sell": "Sell",
     "price_unavailable": "Price unavailable",
     "refresh_failed": "Price refresh failed: {error}",
-    "reload_failed": "Failed to reload positions: {error}"
+    "reload_failed": "Failed to reload positions: {error}",
+    "cover": "Cover",
+    "short": "SHORT"
   },
   "sell_form": {
     "title": "Sell {ticker}",
@@ -173,7 +178,11 @@
     "commission_label": "Est. commission",
     "net_pnl_label": "Net P&L",
     "selling": "Selling…",
-    "max_hint": "max {n}"
+    "max_hint": "max {n}",
+    "cost_label": "Buy-back cost",
+    "covering": "Covering…",
+    "covered": "Short covered.",
+    "confirm_cover": "Confirm Cover"
   },
   "analytics": {
     "title": "Analytics",
