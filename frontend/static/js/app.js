@@ -1794,15 +1794,15 @@ async function loadPositions() {
 
 // ── Helpers for price cells ────────────────────────────────────────────────────
 
-function _priceHtml(value) {
-  return value != null ? formatCurrency(value) : '<span class="price-na">—</span>';
+function _priceHtml(value, code) {
+  return value != null ? formatCurrencyIn(value, code) : '<span class="price-na">—</span>';
 }
 
-function _pnlHtml(value) {
+function _pnlHtml(value, code) {
   if (value == null) return '<span class="price-na">—</span>';
   const cls  = value >= 0 ? 'pnl-pos' : 'pnl-neg';
   const sign = value > 0 ? '+' : '';
-  return `<span class="${cls}">${sign}${formatCurrency(value)}</span>`;
+  return `<span class="${cls}">${sign}${formatCurrencyIn(value, code)}</span>`;
 }
 
 function _pnlPctHtml(value) {
@@ -1907,6 +1907,13 @@ function scopePositionToBroker(p, brokerId) {
 // "SHORT" pill shown next to the ticker on short positions.
 function shortBadgeHtml() {
   return `<span class="short-badge">${escHtml(i18n.t('positions.short'))}</span>`;
+}
+
+// Currency pill shown when a position is held in a currency other than the
+// reporting currency, so the per-unit/native amounts aren't mistaken for base.
+function currencyTagHtml(code) {
+  if (!code || code === reportingCurrency()) return '';
+  return `<span class="currency-tag">${escHtml(code)}</span>`;
 }
 
 // Small broker chip (color dot + name) shown on broker-scoped position rows.
@@ -2028,15 +2035,16 @@ function renderPositionsRows(positions) {
         ${exchangeBadge(p.exchange)}
         ${tickerLinkHtml(p.ticker, p.name)}
         ${p.direction === 'short' ? shortBadgeHtml() : ''}
+        ${currencyTagHtml(p.currency)}
         ${p.broker_scoped ? brokerTagHtml(p.broker_name, p.broker_color) : ''}
       </td>
       <td>${badge(p.trade_type)}</td>
       <td class="num">${formatNumber(p.total_remaining_quantity)}</td>
-      <td class="num">${formatCurrency(p.avg_cost_per_unit)}</td>
-      <td class="num">${formatCurrency(p.total_cost_basis)}</td>
-      <td class="num price-col">${_priceHtml(p.current_price)}</td>
-      <td class="num price-col">${_priceHtml(p.current_value)}</td>
-      <td class="num price-col">${_pnlHtml(p.unrealized_pnl)}</td>
+      <td class="num">${formatCurrencyIn(p.avg_cost_per_unit, p.currency)}</td>
+      <td class="num">${formatCurrencyIn(p.total_cost_basis, p.currency)}</td>
+      <td class="num price-col">${_priceHtml(p.current_price, p.currency)}</td>
+      <td class="num price-col">${_priceHtml(p.current_value, p.currency)}</td>
+      <td class="num price-col">${_pnlHtml(p.unrealized_pnl, p.currency)}</td>
       <td class="num price-col">${_pnlPctHtml(p.unrealized_pnl_pct)}</td>
       <td><button class="sell-btn">${p.direction === 'short'
             ? escHtml(i18n.t('positions.cover')) : escHtml(i18n.t('positions.sell'))}</button></td>

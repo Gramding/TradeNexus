@@ -113,6 +113,14 @@ def update_settings(payload: dict = Body(...)):
     # Validate everything before writing anything.
     normalized = {key: _validate_setting(key, value) for key, value in payload.items()}
 
+    # `currency` (display) and `base_currency` (reporting/FX base) are kept in sync
+    # so the app has a single reporting currency. Setting either updates both,
+    # unless the request explicitly sets both to different values.
+    if "currency" in normalized and "base_currency" not in normalized:
+        normalized["base_currency"] = _validate_setting("base_currency", normalized["currency"])
+    elif "base_currency" in normalized and "currency" not in normalized:
+        normalized["currency"] = normalized["base_currency"]
+
     conn = get_connection()
     try:
         for key, value in normalized.items():

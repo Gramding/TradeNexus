@@ -9,6 +9,7 @@
 const appSettings = {
   display_name: 'Trader',
   currency: 'USD',
+  base_currency: 'USD',
   language: 'en',
   date_format: 'MM/DD/YYYY',
   date_format_manual_override: '0',
@@ -21,12 +22,19 @@ const appSettings = {
 // Locale inferred from currency, per spec: USD → en-US, EUR → de-DE, GBP → en-GB.
 const CURRENCY_LOCALE = { USD: 'en-US', EUR: 'de-DE', GBP: 'en-GB' };
 
+// The portfolio's reporting currency: base_currency (multi-currency reporting
+// base) falling back to the legacy `currency` setting. All base-currency money
+// — stats, cash balance, converted totals — formats with this.
+function reportingCurrency() {
+  return appSettings.base_currency || appSettings.currency || 'USD';
+}
+
 // Resolve the locale for currency/number formatting. The base comes from the
 // currency, but an explicit decimal_separator overrides it so the user always
 // gets the separator they chose (the currency symbol still comes from the
 // `currency` option, independent of locale).
 function _activeLocale() {
-  const base = CURRENCY_LOCALE[appSettings.currency] || 'en-US';
+  const base = CURRENCY_LOCALE[reportingCurrency()] || 'en-US';
   if (appSettings.decimal_separator === ',') return 'de-DE';            // comma decimal
   if (appSettings.decimal_separator === '.') return base === 'de-DE' ? 'en-US' : base;  // dot decimal
   return base;
@@ -38,8 +46,23 @@ function formatCurrency(value) {
   const safe = Number.isFinite(n) ? n : 0;
   return new Intl.NumberFormat(_activeLocale(), {
     style: 'currency',
-    currency: appSettings.currency || 'USD',
+    currency: reportingCurrency(),
   }).format(safe);
+}
+
+// Format an amount in an explicit currency code (e.g. a position held in EUR
+// while the base currency is USD). Falls back to the reporting currency.
+function formatCurrencyIn(value, code) {
+  const n = Number(value);
+  const safe = Number.isFinite(n) ? n : 0;
+  try {
+    return new Intl.NumberFormat(_activeLocale(), {
+      style: 'currency',
+      currency: code || reportingCurrency(),
+    }).format(safe);
+  } catch {
+    return formatCurrency(safe);  // unknown code → reporting currency
+  }
 }
 
 // Plain number display (quantities, share counts) — honors the decimal separator
@@ -54,7 +77,7 @@ function formatNumber(value, maxFractionDigits = 6) {
 function currencySymbol() {
   const part = new Intl.NumberFormat(_activeLocale(), {
     style: 'currency',
-    currency: appSettings.currency || 'USD',
+    currency: reportingCurrency(),
   }).formatToParts(0).find(p => p.type === 'currency');
   return part ? part.value : '$';
 }
