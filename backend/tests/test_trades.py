@@ -18,7 +18,7 @@ def test_buy_deducts_cash(client, user_id):
 
 def test_unknown_trade_type_rejected(client, user_id):
     r = client.post(f"/users/{user_id}/trades", json={
-        "ticker": "AAPL", "trade_type": "bond", "action": "buy",
+        "ticker": "AAPL", "trade_type": "warrant", "action": "buy",
         "quantity": 1, "price_per_unit": 1, "trade_date": "2026-05-01",
     })
     assert r.status_code == 400

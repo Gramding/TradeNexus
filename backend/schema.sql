@@ -56,6 +56,11 @@ CREATE TABLE IF NOT EXISTS trades (
     underlying         TEXT,
     trade_currency     TEXT     NOT NULL DEFAULT 'USD',
     fx_rate            REAL     NOT NULL DEFAULT 1 CHECK (fx_rate > 0),
+    face_value         REAL,                  -- bonds: par per unit (e.g. 1000)
+    coupon_rate        REAL,                  -- bonds: annual coupon rate, %
+    coupon_frequency   INTEGER,               -- bonds: payments per year (1, 2, 4, 12)
+    maturity_date      TEXT,                  -- bonds: ISO date
+    accrued_interest   REAL,                  -- bonds: accrued at purchase, in trade_currency
     created_at         TEXT     NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -74,7 +79,7 @@ CREATE TABLE IF NOT EXISTS sell_lots (
 CREATE TABLE IF NOT EXISTS cash_pool (
     id               INTEGER  PRIMARY KEY AUTOINCREMENT,
     user_id          INTEGER  NOT NULL REFERENCES users(id),
-    transaction_type TEXT     NOT NULL CHECK (transaction_type IN ('deposit', 'withdrawal', 'sell_proceeds', 'buy_deduction')),
+    transaction_type TEXT     NOT NULL CHECK (transaction_type IN ('deposit', 'withdrawal', 'sell_proceeds', 'buy_deduction', 'dividend', 'interest', 'fee')),
     amount           REAL     NOT NULL,
     reference_id     INTEGER,
     note             TEXT,

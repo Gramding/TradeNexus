@@ -122,6 +122,7 @@ def _validate_iso_date(value, field: str):
 #          18=instr_symbol 19=instr_name 20=instr_exchange 21=instr_asset_class 22=instr_currency
 #          23=multiplier 24=strike_price 25=expiration_date 26=underlying 27=direction
 #          28=trade_currency 29=fx_rate
+#          30=face_value 31=coupon_rate 32=coupon_frequency 33=maturity_date 34=accrued_interest
 _TRADE_SELECT = (
     "SELECT t.id, t.user_id, t.ticker, t.trade_type, t.action, t.quantity, "
     "t.price_per_unit, t.total_value, t.trade_date, t.notes, t.created_at, "
@@ -129,7 +130,8 @@ _TRADE_SELECT = (
     "t.commission, t.net_total_value, "
     "i.symbol, i.name, i.exchange, i.asset_class, i.currency, "
     "t.multiplier, t.strike_price, t.expiration_date, t.underlying, t.direction, "
-    "t.trade_currency, t.fx_rate "
+    "t.trade_currency, t.fx_rate, "
+    "t.face_value, t.coupon_rate, t.coupon_frequency, t.maturity_date, t.accrued_interest "
     "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
     "LEFT JOIN instruments i ON t.instrument_id = i.id"
 )
@@ -208,6 +210,11 @@ def _row_to_trade(r) -> dict:
         "direction":          r[27] or "long",
         "trade_currency":     r[28] or "USD",
         "fx_rate":            float(r[29]) if r[29] is not None else 1.0,
+        "face_value":         float(r[30]) if r[30] is not None else None,
+        "coupon_rate":        float(r[31]) if r[31] is not None else None,
+        "coupon_frequency":   int(r[32])   if r[32] is not None else None,
+        "maturity_date":      r[33],
+        "accrued_interest":   float(r[34]) if r[34] is not None else 0.0,
     }
 
 
@@ -239,6 +246,10 @@ def _net_total(action: str, total_value: float, commission: float) -> float:
 # 100 shares, i.e. $250 of notional). Anything else defaults to a 1x multiplier.
 OPTION_TRADE_TYPES = {"Call", "Put"}
 DEFAULT_OPTION_MULTIPLIER = 100.0
+BOND_TRADE_TYPES = {"Bond"}
+# Standard US corporate / treasury bond face: prices are quoted as % of par, so
+# a multiplier of face_value/100 converts a "98.5" quote into $985 per bond.
+DEFAULT_BOND_FACE_VALUE = 1000.0
 
 
 def _base_currency(cur: sqlite3.Cursor) -> str:
@@ -280,10 +291,26 @@ def _resolve_fx(conn, cur: sqlite3.Cursor, trade_currency: str, override) -> flo
     return round(rate, 10)
 
 
-def _resolve_multiplier(trade_type: str, override) -> float:
+def _resolve_face_value(trade_type: str, override) -> Optional[float]:
+    """Face/par value for a bond lot: explicit override if given (>0), else 1000
+    for Bond and None for everything else. Used only by bonds; the multiplier
+    derives from face_value/100 so a 98.5 quote prices a $1000 bond at $985."""
+    if override is not None:
+        try:
+            fv = float(override)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="face_value must be a number.")
+        if fv <= 0:
+            raise HTTPException(status_code=422, detail="face_value must be greater than 0.")
+        return round(fv, 10)
+    return DEFAULT_BOND_FACE_VALUE if trade_type in BOND_TRADE_TYPES else None
+
+
+def _resolve_multiplier(trade_type: str, override, face_value: Optional[float] = None) -> float:
     """The contract multiplier for a trade: an explicit override if given (must be
-    > 0), else 100 for Call/Put and 1 for everything else. The canonical trade_type
-    (from _normalize_trade_type) is expected here so the Call/Put match is exact."""
+    > 0); else 100 for Call/Put; else face_value/100 for a Bond (so a per-par
+    quote becomes a dollar amount); else 1. The canonical trade_type (from
+    _normalize_trade_type) is expected so the Call/Put/Bond match is exact."""
     if override is not None:
         try:
             m = float(override)
@@ -292,7 +319,11 @@ def _resolve_multiplier(trade_type: str, override) -> float:
         if m <= 0:
             raise HTTPException(status_code=422, detail="multiplier must be greater than 0.")
         return round(m, 10)
-    return DEFAULT_OPTION_MULTIPLIER if trade_type in OPTION_TRADE_TYPES else 1.0
+    if trade_type in OPTION_TRADE_TYPES:
+        return DEFAULT_OPTION_MULTIPLIER
+    if trade_type in BOND_TRADE_TYPES and face_value is not None:
+        return round(face_value / 100.0, 10)
+    return 1.0
 
 
 def _row_to_sell_lot(r) -> dict:
@@ -320,12 +351,12 @@ def _require_trade(cur: sqlite3.Cursor, trade_id: int) -> tuple:
     #          6=price_per_unit 7=total_value 8=trade_date 9=notes 10=created_at
     #          11=status 12=remaining_quantity 13=broker_id 14=commission 15=multiplier
     #          16=strike_price 17=expiration_date 18=underlying 19=direction
-    #          20=trade_currency 21=fx_rate
+    #          20=trade_currency 21=fx_rate 22=accrued_interest
     cur.execute(
         "SELECT id, user_id, ticker, trade_type, action, quantity, price_per_unit, "
         "total_value, trade_date, notes, created_at, status, remaining_quantity, broker_id, "
         "commission, multiplier, strike_price, expiration_date, underlying, direction, "
-        "trade_currency, fx_rate "
+        "trade_currency, fx_rate, accrued_interest "
         "FROM trades WHERE id = ?",
         (trade_id,),
     )
@@ -374,6 +405,11 @@ class TradeCreate(BaseModel):
     direction: Optional[str] = None      # long (buy-to-open) or short (sell-to-open); inferred from action if omitted
     trade_currency: Optional[str] = None  # native currency; defaults to the instrument's, else base
     fx_rate: Optional[float] = None       # trade_currency -> base; None = auto fetch
+    face_value: Optional[float] = None        # bonds: par per bond (default 1000 for Bond)
+    coupon_rate: Optional[float] = None       # bonds: annual coupon rate, %
+    coupon_frequency: Optional[int] = None    # bonds: payments per year (1, 2, 4, 12)
+    maturity_date: Optional[datetime.date] = None  # bonds: maturity date
+    accrued_interest: Optional[float] = None  # bonds: accrued paid at purchase, in trade_currency
 
 
 class TradeUpdate(BaseModel):
@@ -391,6 +427,11 @@ class TradeUpdate(BaseModel):
     expiration_date: Optional[datetime.date] = None
     underlying: Optional[str] = None
     fx_rate: Optional[float] = None
+    face_value: Optional[float] = None
+    coupon_rate: Optional[float] = None
+    coupon_frequency: Optional[int] = None
+    maturity_date: Optional[datetime.date] = None
+    accrued_interest: Optional[float] = None
 
 
 class SellLotCreate(BaseModel):
@@ -658,12 +699,18 @@ def create_trade(user_id: int, body: TradeCreate):
             instr_currency = row[0] if row else None
 
         # total_value is the full notional: per-unit price × quantity × contract
-        # multiplier (100 for an equity option, 1 for a share). Every downstream
-        # value (net_total_value, cash deduction, stats volume) derives from this.
-        multiplier  = _resolve_multiplier(trade_type, body.multiplier)
+        # multiplier (100 for an equity option, face_value/100 for a bond, 1 for
+        # a share). Every downstream value (net_total_value, cash deduction, stats
+        # volume) derives from this.
+        face_value  = _resolve_face_value(trade_type, body.face_value)
+        multiplier  = _resolve_multiplier(trade_type, body.multiplier, face_value)
         total_value = round(body.quantity * body.price_per_unit * multiplier, 10)
         expiration  = body.expiration_date.isoformat() if body.expiration_date is not None else None
         underlying  = body.underlying.strip().upper() if body.underlying else None
+        maturity    = body.maturity_date.isoformat() if body.maturity_date is not None else None
+        accrued     = round(float(body.accrued_interest), 10) if body.accrued_interest else 0.0
+        if accrued < 0:
+            raise HTTPException(status_code=422, detail="accrued_interest must be >= 0.")
 
         # Native currency: explicit > the instrument's > the base currency. fx_rate
         # converts the native amounts into base; the cash pool is kept in base.
@@ -672,14 +719,20 @@ def create_trade(user_id: int, body: TradeCreate):
 
         commission      = _compute_commission(cur, body.broker_id, body.quantity, body.commission)
         net_total_value = _net_total(body.action, total_value, commission)
-        net_total_base  = round(net_total_value * fx_rate, 10)
+        # Bonds: the buyer pays accrued interest on top of the clean price; the
+        # seller receives it. Bundled into the cash flow so the broker's debit
+        # matches reality, but kept out of total_value/cost basis so realized P&L
+        # reflects principal gain/loss only.
+        cash_native     = net_total_value + (accrued if body.action == "buy" else -accrued)
+        net_total_base  = round(cash_native * fx_rate, 10)
 
         cur.execute(
             "INSERT INTO trades "
             "(user_id, broker_id, instrument_id, ticker, trade_type, action, quantity, price_per_unit, "
             "total_value, trade_date, notes, remaining_quantity, commission, net_total_value, "
-            "multiplier, strike_price, expiration_date, underlying, direction, trade_currency, fx_rate) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "multiplier, strike_price, expiration_date, underlying, direction, trade_currency, fx_rate, "
+            "face_value, coupon_rate, coupon_frequency, maturity_date, accrued_interest) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user_id, body.broker_id, body.instrument_id, body.ticker.strip().upper(),
                 trade_type, body.action, body.quantity, body.price_per_unit, total_value,
@@ -687,13 +740,15 @@ def create_trade(user_id: int, body: TradeCreate):
                 commission, net_total_value,
                 multiplier, body.strike_price, expiration, underlying, direction,
                 trade_currency, fx_rate,
+                face_value, body.coupon_rate, body.coupon_frequency, maturity, accrued,
             ),
         )
         trade_id = cur.lastrowid
 
         if body.action == "buy":
             # Long open: deduct the commission-inclusive net (in base currency) so the
-            # cash pool matches what the broker actually debits (gross cost + commission).
+            # cash pool matches what the broker actually debits (gross cost + commission
+            # + bond accrued interest).
             cur.execute(
                 "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
                 "VALUES (?, 'buy_deduction', ?, ?)",
@@ -1165,11 +1220,11 @@ def get_positions(user_id: int):
         # synthetic close rows are status='closed' and never match.
         cur.execute(
             "SELECT id, ticker, trade_type, trade_date, remaining_quantity, price_per_unit, status, "
-            "multiplier, direction, trade_currency, fx_rate "
+            "multiplier, direction, trade_currency, fx_rate, strike_price, expiration_date "
             "FROM trades "
             "WHERE user_id = ? AND status IN ('open', 'partial') "
             "AND ((action = 'buy' AND direction = 'long') OR (action = 'sell' AND direction = 'short')) "
-            "ORDER BY ticker, trade_type, direction, trade_date, id",
+            "ORDER BY ticker, trade_type, direction, expiration_date, strike_price, trade_date, id",
             (user_id,),
         )
         rows = cur.fetchall()
@@ -1181,19 +1236,21 @@ def get_positions(user_id: int):
     finally:
         conn.close()
 
-    # Group by (ticker, trade_type, direction) so a long and a short on the same
-    # ticker stay separate. avg_cost_per_unit and total_cost_basis are in the
-    # position's native currency; total_cost_basis_base converts via each lot's
-    # stored fx_rate for a base-currency portfolio view.
+    # Group by (ticker, trade_type, direction, strike, expiration) so a long and a
+    # short on the same ticker stay separate, AND so two calls on the same name
+    # with different strikes / expirations stay separate (they aren't fungible).
+    # avg_cost_per_unit and total_cost_basis are in the position's native currency;
+    # total_cost_basis_base converts via each lot's stored fx_rate.
     groups: dict[tuple, dict] = {}
     for (trade_id, ticker, trade_type, trade_date, remaining_qty, price_per_unit,
-         status, multiplier, direction, trade_currency, fx_rate) in rows:
+         status, multiplier, direction, trade_currency, fx_rate,
+         strike_price, expiration_date) in rows:
         remaining_qty = float(remaining_qty)
         price_per_unit = float(price_per_unit)
         multiplier = float(multiplier) if multiplier is not None else 1.0
         fx_rate = float(fx_rate) if fx_rate is not None else 1.0
         direction = direction or "long"
-        key = (ticker, trade_type, direction)
+        key = (ticker, trade_type, direction, strike_price, expiration_date)
         if key not in groups:
             groups[key] = {
                 "ticker": ticker,
@@ -1201,6 +1258,8 @@ def get_positions(user_id: int):
                 "direction": direction,
                 "multiplier": multiplier,
                 "currency": trade_currency or "USD",
+                "strike_price": float(strike_price) if strike_price is not None else None,
+                "expiration_date": expiration_date,
                 "total_remaining_quantity": 0.0,
                 "total_raw_cost": 0.0,
                 "total_cost_basis": 0.0,
@@ -1231,6 +1290,8 @@ def get_positions(user_id: int):
             "direction": g["direction"],
             "multiplier": g["multiplier"],
             "currency": g["currency"],
+            "strike_price": g["strike_price"],
+            "expiration_date": g["expiration_date"],
             "total_remaining_quantity": round(total_qty, 10),
             "avg_cost_per_unit": round(g["total_raw_cost"] / total_qty, 10) if total_qty else 0.0,
             # For a short, this is the proceeds received (the basis to compare a
@@ -1394,6 +1455,240 @@ def withdraw_cash(user_id: int, body: CashTransaction):
 
 
 # ---------------------------------------------------------------------------
+# Events: dividends, splits, interest, fees
+# ---------------------------------------------------------------------------
+
+EVENT_TYPES = {"dividend", "split", "interest", "fee"}
+
+# How each event posts to the cash pool (split has no cash effect).
+_EVENT_CASH_TYPE = {"dividend": "dividend", "interest": "interest", "fee": "fee"}
+
+
+class EventCreate(BaseModel):
+    event_type: str
+    event_date: datetime.date
+    instrument_id: Optional[int] = None
+    ticker: Optional[str] = None        # free-text fallback when instrument_id is None
+    amount: Optional[float] = None      # dividend: per-share; interest/fee: total
+    ratio: Optional[float] = None       # split only: new/old (2.0 = 2-for-1, 0.5 = 1-for-2 reverse)
+    currency: Optional[str] = None      # native; defaults to instrument's, else base
+    fx_rate: Optional[float] = None     # native -> base; None = auto
+    note: Optional[str] = None
+
+
+def _shares_held(cur: sqlite3.Cursor, user_id: int, instrument_id: int, on_date: str) -> float:
+    """Long-lot shares of `instrument_id` the user holds on `on_date`. Dividends
+    pay only on open long quantity; shorts and closed lots are excluded."""
+    cur.execute(
+        "SELECT COALESCE(SUM(remaining_quantity), 0) FROM trades "
+        "WHERE user_id = ? AND instrument_id = ? "
+        "AND action = 'buy' AND direction = 'long' "
+        "AND status IN ('open', 'partial') AND trade_date <= ?",
+        (user_id, instrument_id, on_date),
+    )
+    return float(cur.fetchone()[0] or 0)
+
+
+def _apply_split(cur: sqlite3.Cursor, user_id: int, instrument_id: int, ratio: float, on_date: str) -> int:
+    """Scale every open lot of `instrument_id` by `ratio`: quantity and
+    remaining_quantity multiply, price_per_unit divides, total_value invariant
+    (q * p * multiplier stays equal). Closed sell_lots are realized history and
+    untouched. Returns the number of lots adjusted."""
+    cur.execute(
+        "SELECT id, quantity, remaining_quantity, price_per_unit FROM trades "
+        "WHERE user_id = ? AND instrument_id = ? "
+        "AND action = 'buy' AND direction = 'long' "
+        "AND status IN ('open', 'partial') AND trade_date <= ?",
+        (user_id, instrument_id, on_date),
+    )
+    rows = cur.fetchall()
+    for trade_id, qty, rem, price in rows:
+        new_qty   = round(float(qty) * ratio, 10)
+        new_rem   = round(float(rem) * ratio, 10)
+        new_price = round(float(price) / ratio, 10)
+        cur.execute(
+            "UPDATE trades SET quantity = ?, remaining_quantity = ?, price_per_unit = ? WHERE id = ?",
+            (new_qty, new_rem, new_price, trade_id),
+        )
+    return len(rows)
+
+
+def _event_to_row(r) -> dict:
+    return {
+        "id":            r[0],
+        "user_id":       r[1],
+        "instrument_id": r[2],
+        "event_type":    r[3],
+        "event_date":    r[4],
+        "amount":        float(r[5]) if r[5] is not None else None,
+        "ratio":         float(r[6]) if r[6] is not None else None,
+        "currency":      r[7],
+        "fx_rate":       float(r[8]) if r[8] is not None else 1.0,
+        "note":          r[9],
+        "created_at":    r[10],
+        "ticker":        r[11],   # joined from instruments when present
+    }
+
+
+_EVENT_SELECT = (
+    "SELECT e.id, e.user_id, e.instrument_id, e.event_type, e.event_date, "
+    "e.amount, e.ratio, e.currency, e.fx_rate, e.note, e.created_at, i.ticker "
+    "FROM events e LEFT JOIN instruments i ON e.instrument_id = i.id"
+)
+
+
+@app.post("/users/{user_id}/events", status_code=201)
+def create_event(user_id: int, body: EventCreate):
+    """Record a dividend, split, interest, or fee event.
+
+    dividend : per-share `amount` × shares held on `event_date` (long only),
+               credited to the cash pool in base currency. instrument required.
+    split    : multiplies every open long lot's quantity by `ratio` and divides
+               its price_per_unit, so total notional is invariant. No cash move.
+    interest : flat `amount` credited to cash. instrument optional.
+    fee      : flat `amount` debited from cash. instrument optional."""
+    if body.event_type not in EVENT_TYPES:
+        raise HTTPException(status_code=422, detail=f"event_type must be one of: {', '.join(sorted(EVENT_TYPES))}.")
+    if body.event_type in ("dividend", "split") and body.instrument_id is None:
+        raise HTTPException(status_code=422, detail=f"{body.event_type} requires instrument_id.")
+    if body.event_type == "split":
+        if body.ratio is None or body.ratio <= 0:
+            raise HTTPException(status_code=422, detail="split ratio must be > 0 (e.g. 2.0 for 2-for-1, 0.5 for 1-for-2).")
+    else:
+        if body.amount is None or body.amount <= 0:
+            raise HTTPException(status_code=422, detail=f"{body.event_type} amount must be > 0.")
+
+    conn = _db()
+    try:
+        cur = conn.cursor()
+        _require_user(cur, user_id)
+        instr_currency = None
+        if body.instrument_id is not None:
+            _require_instrument(cur, body.instrument_id)
+            row = cur.execute("SELECT currency FROM instruments WHERE id = ?", (body.instrument_id,)).fetchone()
+            instr_currency = row[0] if row else None
+
+        currency = ((body.currency or instr_currency or _base_currency(cur)) or "USD").strip().upper()
+        fx_rate  = _resolve_fx(conn, cur, currency, body.fx_rate)
+        event_date_iso = body.event_date.isoformat()
+
+        cur.execute(
+            "INSERT INTO events (user_id, instrument_id, event_type, event_date, "
+            "amount, ratio, currency, fx_rate, note) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, body.instrument_id, body.event_type, event_date_iso,
+             body.amount, body.ratio, currency, fx_rate, body.note),
+        )
+        event_id = cur.lastrowid
+
+        if body.event_type == "split":
+            _apply_split(cur, user_id, body.instrument_id, float(body.ratio), event_date_iso)
+        else:
+            # Cash effect in base currency. Dividends are paid on the long shares
+            # held on event_date; interest/fee are total amounts entered by the user.
+            if body.event_type == "dividend":
+                shares = _shares_held(cur, user_id, body.instrument_id, event_date_iso)
+                gross_native = round(float(body.amount) * shares, 10)
+            else:
+                gross_native = round(float(body.amount), 10)
+            signed_base = round(gross_native * fx_rate * (-1 if body.event_type == "fee" else 1), 10)
+            cur.execute(
+                "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id, note) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, _EVENT_CASH_TYPE[body.event_type], signed_base, event_id, body.note),
+            )
+
+        conn.commit()
+        stats_cache.invalidate(user_id)
+        row = cur.execute(_EVENT_SELECT + " WHERE e.id = ?", (event_id,)).fetchone()
+    except HTTPException:
+        raise
+    except sqlite3.Error as exc:
+        conn.rollback()
+        logger.error("create_event DB error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to record event.")
+    finally:
+        conn.close()
+    return _event_to_row(row)
+
+
+@app.get("/users/{user_id}/events")
+def list_events(user_id: int, event_type: Optional[str] = Query(None)):
+    if event_type is not None and event_type not in EVENT_TYPES:
+        raise HTTPException(status_code=422, detail=f"event_type must be one of: {', '.join(sorted(EVENT_TYPES))}.")
+    conn = _db()
+    try:
+        cur = conn.cursor()
+        _require_user(cur, user_id)
+        sql = _EVENT_SELECT + " WHERE e.user_id = ?"
+        params: list = [user_id]
+        if event_type is not None:
+            sql += " AND e.event_type = ?"
+            params.append(event_type)
+        sql += " ORDER BY e.event_date DESC, e.id DESC"
+        rows = cur.execute(sql, params).fetchall()
+    except HTTPException:
+        raise
+    except sqlite3.Error as exc:
+        logger.error("list_events DB error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to load events.")
+    finally:
+        conn.close()
+    return [_event_to_row(r) for r in rows]
+
+
+@app.delete("/events/{event_id}")
+def delete_event(event_id: int):
+    """Reverse an event: remove its cash row (dividend/interest/fee), or undo a
+    split by inverting the ratio on all open lots of that instrument."""
+    conn = _db()
+    try:
+        cur = conn.cursor()
+        row = cur.execute(
+            "SELECT user_id, instrument_id, event_type, event_date, ratio "
+            "FROM events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Event {event_id} not found.")
+        user_id, instrument_id, event_type, event_date, ratio = row
+
+        if event_type == "split":
+            # Inverting the ratio reverses the in-place adjustment exactly, provided
+            # no later lots were opened post-split — those would get an unwanted
+            # inverse, so we reject that case rather than corrupt state.
+            after = cur.execute(
+                "SELECT COUNT(*) FROM trades WHERE user_id = ? AND instrument_id = ? "
+                "AND action = 'buy' AND direction = 'long' AND trade_date > ?",
+                (user_id, instrument_id, event_date),
+            ).fetchone()[0]
+            if after:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cannot delete a split that has trades dated after it; reverse them first.",
+                )
+            _apply_split(cur, user_id, instrument_id, 1.0 / float(ratio), event_date)
+        else:
+            cur.execute(
+                "DELETE FROM cash_pool WHERE transaction_type = ? AND reference_id = ?",
+                (_EVENT_CASH_TYPE[event_type], event_id),
+            )
+
+        cur.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        conn.commit()
+        stats_cache.invalidate(user_id)
+    except HTTPException:
+        raise
+    except sqlite3.Error as exc:
+        conn.rollback()
+        logger.error("delete_event DB error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to delete event.")
+    finally:
+        conn.close()
+    return {"detail": f"Event {event_id} deleted."}
+
+
+# ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
 
@@ -1490,28 +1785,30 @@ def _search_trades_bucket(cur, user_id, like, cursor) -> dict:
 
 
 def _search_positions_bucket(cur, user_id, like, cursor) -> dict:
-    """Open/partial buy lots whose ticker matches, grouped by (ticker, trade_type).
+    """Open/partial lots (long opens + short opens) whose ticker matches, grouped
+    by (ticker, trade_type, direction).
 
-    Mirrors the grouping of get_positions: the same ticker held under two trade
-    types is two distinct positions, not one merged row. Positions are aggregates
-    with no row id, so the keyset runs on the (ticker, trade_type) tuple, stored
-    in the cursor's last_val as a [ticker, trade_type] pair (last_id is unused)."""
+    Mirrors get_positions: the same ticker held in two trade types or in opposite
+    directions is two distinct positions, not one merged row. Positions are
+    aggregates with no row id, so the keyset runs on the (ticker, trade_type,
+    direction) tuple stored in the cursor's last_val (last_id is unused)."""
     sql = (
-        "SELECT ticker, trade_type, "
+        "SELECT ticker, trade_type, direction, "
         "SUM(remaining_quantity) AS rem, "
         "SUM(remaining_quantity * price_per_unit) AS raw_cost, "
         "SUM(remaining_quantity * price_per_unit * multiplier) AS basis "
         "FROM trades "
-        "WHERE user_id = ? AND action = 'buy' AND status IN ('open', 'partial') "
+        "WHERE user_id = ? AND status IN ('open', 'partial') "
+        "AND ((action = 'buy' AND direction = 'long') OR (action = 'sell' AND direction = 'short')) "
         "AND ticker LIKE ?"
     )
     params = [user_id, like]
     if cursor is not None:
         last_val, _ = _decode_cursor(cursor)
-        last_ticker, last_type = last_val
-        sql += " AND (ticker, trade_type) > (?, ?)"
-        params.extend([last_ticker, last_type])
-    sql += " GROUP BY ticker, trade_type ORDER BY ticker ASC, trade_type ASC LIMIT ?"
+        last_ticker, last_type, last_dir = last_val
+        sql += " AND (ticker, trade_type, direction) > (?, ?, ?)"
+        params.extend([last_ticker, last_type, last_dir])
+    sql += " GROUP BY ticker, trade_type, direction ORDER BY ticker ASC, trade_type ASC, direction ASC LIMIT ?"
     params.append(_SEARCH_LIMIT + 1)
 
     cur.execute(sql, params)
@@ -1520,18 +1817,19 @@ def _search_positions_bucket(cur, user_id, like, cursor) -> dict:
     rows = rows[:_SEARCH_LIMIT]
     results = []
     for r in rows:
-        rem = float(r[2] or 0)
-        raw_cost = float(r[3] or 0)
-        basis = float(r[4] or 0)
+        rem = float(r[3] or 0)
+        raw_cost = float(r[4] or 0)
+        basis = float(r[5] or 0)
         results.append({
             "ticker":                   r[0],
             "trade_type":               r[1],
+            "direction":                r[2] or "long",
             "total_remaining_quantity": round(rem, 10),
             "avg_cost_per_unit":        round(raw_cost / rem, 10) if rem else 0.0,
             "total_cost_basis":         round(basis, 10),
         })
     next_cursor = (
-        _encode_cursor([results[-1]["ticker"], results[-1]["trade_type"]], 0)
+        _encode_cursor([results[-1]["ticker"], results[-1]["trade_type"], results[-1]["direction"]], 0)
         if has_more and results else None
     )
     return _bucket(results, has_more, next_cursor)
@@ -1731,6 +2029,18 @@ def get_user_stats(
         )
         total_commissions = cur.fetchone()[0]
 
+        # Event-driven income/expense in base currency (signed by event_type).
+        cur.execute(
+            "SELECT transaction_type, COALESCE(SUM(amount), 0) FROM cash_pool "
+            "WHERE user_id = ? AND transaction_type IN ('dividend', 'interest', 'fee') "
+            "GROUP BY transaction_type",
+            (user_id,),
+        )
+        event_totals = {t: float(a) for t, a in cur.fetchall()}
+        dividend_income = event_totals.get("dividend", 0.0)
+        interest_income = event_totals.get("interest", 0.0)
+        fees_paid       = -event_totals.get("fee", 0.0)  # stored negative; report as positive expense
+
         # Net realized P&L: sell_lots.realized_pnl is already net of both the sell
         # commission and the proportional buy commission.
         cur.execute(
@@ -1763,6 +2073,9 @@ def get_user_stats(
         "sell_volume":        float(sell_volume),
         "net_position":       float(sell_volume) - float(buy_volume),
         "total_commissions":  float(total_commissions),
+        "dividend_income":    float(dividend_income),
+        "interest_income":    float(interest_income),
+        "fees_paid":          float(fees_paid),
         "net_realized_pnl":   float(net_realized_pnl),
         "this_fiscal_year_volume": float(this_fiscal_year_volume),
         "fiscal_year_start":  fy_start.isoformat(),

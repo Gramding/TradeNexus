@@ -4,9 +4,9 @@ from conftest import make_trade
 def test_default_types_seeded_and_ordered(client):
     types = client.get("/trade-types").json()
     names = [t["name"] for t in types]
-    # Asset-class-aligned defaults (ETF/Crypto/Forex/Futures) plus the original
-    # option/other set, so an instrument's asset_class can auto-fill the type.
-    assert set(names) == {"Stock", "ETF", "Crypto", "Forex", "Futures", "Call", "Put", "Other"}
+    # Asset-class-aligned defaults (ETF/Crypto/Forex/Futures/Bond) plus the
+    # original option/other set, so an instrument's asset_class can auto-fill.
+    assert set(names) == {"Stock", "ETF", "Crypto", "Forex", "Futures", "Call", "Put", "Bond", "Other"}
     # is_default DESC, then name ASC -> all defaults, alphabetical
     assert names == sorted(names)
     assert all(t["is_default"] == 1 for t in types)
@@ -21,9 +21,9 @@ def test_usage_count_reflects_trades(client, user_id):
 
 
 def test_create_validation(client):
-    assert client.post("/trade-types", json={"name": "Bond"}).status_code == 201
+    assert client.post("/trade-types", json={"name": "Convertible"}).status_code == 201
     # case-insensitive duplicate
-    assert client.post("/trade-types", json={"name": "bond"}).status_code == 409
+    assert client.post("/trade-types", json={"name": "convertible"}).status_code == 409
     # empty / too long
     assert client.post("/trade-types", json={"name": "   "}).status_code == 422
     assert client.post("/trade-types", json={"name": "x" * 51}).status_code == 422
@@ -35,15 +35,15 @@ def test_create_is_not_default(client):
 
 
 def test_rename_cascades_to_trades(client, user_id):
-    bond = client.post("/trade-types", json={"name": "Bond"}).json()
-    make_trade(client, user_id, trade_type="bond")
+    warrant = client.post("/trade-types", json={"name": "Warrant"}).json()
+    make_trade(client, user_id, trade_type="warrant")
 
-    r = client.put(f"/trade-types/{bond['id']}", json={"name": "Bonds"})
+    r = client.put(f"/trade-types/{warrant['id']}", json={"name": "Warrants"})
     assert r.status_code == 200
     assert r.json()["trades_updated"] == 1
 
     rows = client.get(f"/users/{user_id}/trades").json()["trades"]
-    assert rows[0]["trade_type"] == "Bonds"
+    assert rows[0]["trade_type"] == "Warrants"
 
 
 def test_delete_rules(client, user_id):
@@ -55,9 +55,9 @@ def test_delete_rules(client, user_id):
     assert "Default" in r.json()["detail"]
 
     # in-use custom type cannot be deleted
-    bond = client.post("/trade-types", json={"name": "Bond"}).json()
-    make_trade(client, user_id, trade_type="bond")
-    r = client.delete(f"/trade-types/{bond['id']}")
+    warrant = client.post("/trade-types", json={"name": "Warrant"}).json()
+    make_trade(client, user_id, trade_type="warrant")
+    r = client.delete(f"/trade-types/{warrant['id']}")
     assert r.status_code == 400
     assert "Cannot delete" in r.json()["detail"]
 

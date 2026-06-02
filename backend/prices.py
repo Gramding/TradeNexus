@@ -163,6 +163,15 @@ def get_positions_with_prices(
         if cur.fetchone() is None:
             raise HTTPException(status_code=404, detail=f"User {user_id} not found.")
 
+        # Base currency for the optional base-currency unrealized view. Cached so
+        # we do one FX fetch per native currency, not per position.
+        base_ccy_row = conn.execute(
+            "SELECT value FROM app_settings WHERE key IN ('base_currency', 'currency') "
+            "ORDER BY CASE key WHEN 'base_currency' THEN 0 ELSE 1 END LIMIT 1"
+        ).fetchone()
+        base_currency = ((base_ccy_row[0] if base_ccy_row else "USD") or "USD").strip().upper()
+        _live_fx_cache: dict = {}
+
         # JOIN instruments so each position carries its Yahoo symbol; prices are
         # fetched by symbol while the display ticker is shown to the user.
         # Open lots: long opens (buy/long) and short opens (sell/short). Synthetic
@@ -171,28 +180,31 @@ def get_positions_with_prices(
             "SELECT t.id, t.ticker, t.trade_type, t.trade_date, t.remaining_quantity, "
             "t.price_per_unit, t.status, t.broker_id, b.color, t.quantity, t.commission, "
             "i.symbol, i.name, i.exchange, i.asset_class, i.id, t.multiplier, t.direction, "
-            "t.trade_currency, t.fx_rate "
+            "t.trade_currency, t.fx_rate, t.strike_price, t.expiration_date "
             "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
             "LEFT JOIN instruments i ON t.instrument_id = i.id "
             "WHERE t.user_id = ? AND t.status IN ('open', 'partial') "
             "AND ((t.action = 'buy' AND t.direction = 'long') OR (t.action = 'sell' AND t.direction = 'short')) "
-            "ORDER BY t.ticker, t.trade_type, t.direction, t.trade_date, t.id",
+            "ORDER BY t.ticker, t.trade_type, t.direction, t.expiration_date, t.strike_price, t.trade_date, t.id",
             (user_id,),
         )
         rows = cur.fetchall()
 
-        # Group lots into positions, same logic as GET /users/{id}/positions
+        # Group lots by (ticker, trade_type, direction, strike, expiration) so
+        # different option contracts on the same underlying stay separate. The
+        # base-currency cost basis is summed per-lot at each lot's stored fx_rate.
         groups: dict[tuple, dict] = {}
         for (trade_id, ticker, trade_type, trade_date, remaining_qty, price_per_unit,
              status, broker_id, broker_color, orig_quantity, buy_commission,
              instr_symbol, instr_name, instr_exchange, instr_asset_class, instr_id,
-             multiplier, direction, trade_currency, fx_rate) in rows:
+             multiplier, direction, trade_currency, fx_rate,
+             strike_price, expiration_date) in rows:
             remaining_qty  = float(remaining_qty)
             price_per_unit = float(price_per_unit)
             multiplier     = float(multiplier) if multiplier is not None else 1.0
             fx_rate        = float(fx_rate) if fx_rate is not None else 1.0
             direction      = direction or "long"
-            key = (ticker, trade_type, direction)
+            key = (ticker, trade_type, direction, strike_price, expiration_date)
             if key not in groups:
                 groups[key] = {
                     "ticker":                   ticker,
@@ -206,6 +218,8 @@ def get_positions_with_prices(
                     "multiplier":               multiplier,
                     "currency":                 trade_currency or "USD",
                     "fx_rate":                  fx_rate,
+                    "strike_price":             float(strike_price) if strike_price is not None else None,
+                    "expiration_date":          expiration_date,
                     "total_remaining_quantity": 0.0,
                     "total_raw_cost":           0.0,
                     "total_cost_basis":         0.0,
@@ -271,6 +285,23 @@ def get_positions_with_prices(
             current_price = price_data["price"] if price_data else None
 
             direction = g["direction"]
+            position_currency = g["currency"]
+            # Live FX from the position's currency to the base, for the optional
+            # base-currency unrealized view. Cached per pair so a portfolio of
+            # many EUR positions does one fetch, not N. None falls back to 1.0.
+            if position_currency == base_currency:
+                live_fx = 1.0
+            elif position_currency in _live_fx_cache:
+                live_fx = _live_fx_cache[position_currency]
+            else:
+                try:
+                    live_fx = fx_service.get_or_fetch_fx(conn, position_currency, base_currency) or 1.0
+                except Exception as exc:
+                    logger.warning("positions/prices: FX %s->%s failed: %s",
+                                   position_currency, base_currency, exc)
+                    live_fx = 1.0
+                _live_fx_cache[position_currency] = live_fx
+
             if current_price is not None:
                 # current_value is the live market value of the units (the cost to
                 # buy back, for a short). A long gains when value rises above its
@@ -285,8 +316,18 @@ def get_positions_with_prices(
                     round(unrealized_pnl / cost_basis * 100, 4)
                     if cost_basis != 0 else None
                 )
+                # Base-currency view: market value at today's FX, vs cost basis
+                # converted at each lot's stored FX (already in *_base). Captures
+                # both the price move and the currency move since each lot opened.
+                current_value_base = round(current_value * live_fx, 10)
+                cost_basis_base    = round(g["total_cost_basis_base"], 10)
+                unrealized_pnl_base = round(
+                    (cost_basis_base - current_value_base) if direction == "short"
+                    else (current_value_base - cost_basis_base), 10
+                )
             else:
                 current_value = unrealized_pnl = unrealized_pnl_pct = None
+                current_value_base = unrealized_pnl_base = None
 
             positions.append({
                 "ticker":                   g["ticker"],
@@ -299,7 +340,9 @@ def get_positions_with_prices(
                 "trade_type":               g["trade_type"],
                 "direction":                direction,
                 "multiplier":               multiplier,
-                "currency":                 g["currency"],
+                "currency":                 position_currency,
+                "strike_price":             g["strike_price"],
+                "expiration_date":          g["expiration_date"],
                 "total_remaining_quantity": total_qty,
                 "avg_cost_per_unit":        avg_cost,
                 "total_cost_basis":         cost_basis,
@@ -310,6 +353,8 @@ def get_positions_with_prices(
                 "current_value":            current_value,
                 "unrealized_pnl":           unrealized_pnl,
                 "unrealized_pnl_pct":       unrealized_pnl_pct,
+                "current_value_base":       current_value_base,
+                "unrealized_pnl_base":      unrealized_pnl_base,
                 "price_source":             price_data["source"]      if price_data else None,
                 "price_fetched_at":         price_data["fetched_at"]  if price_data else None,
                 "price_from_cache":         price_data["from_cache"]  if price_data else None,

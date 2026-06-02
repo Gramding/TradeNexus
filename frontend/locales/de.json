@@ -120,7 +120,18 @@
     "underlying": "Basiswert",
     "open_long": "Kaufen (Long)",
     "open_short": "Leerverkauf",
-    "action_hint": "Position eröffnen. Schließen Sie sie später im Tab Positionen."
+    "action_hint": "Position eröffnen. Schließen Sie sie später im Tab Positionen.",
+    "face_value": "Nennwert",
+    "face_value_hint": "Nennwert je Anleihe. Standard ist 1000.",
+    "coupon_rate": "Kuponzins (%)",
+    "coupon_frequency": "Kupon-Frequenz",
+    "freq_annual": "Jährlich (1)",
+    "freq_semiannual": "Halbjährlich (2)",
+    "freq_quarterly": "Vierteljährlich (4)",
+    "freq_monthly": "Monatlich (12)",
+    "maturity": "Fälligkeit",
+    "accrued_interest": "Stückzinsen beim Kauf",
+    "accrued_hint": "Wird der Cash-Belastung zugeschlagen, nicht den Anschaffungskosten."
   },
   "positions": {
     "title": "Positionen",
@@ -236,7 +247,10 @@
       "deposit": "Einzahlung",
       "withdrawal": "Auszahlung",
       "sell_proceeds": "Verkaufserlös",
-      "buy_deduction": "Kaufbelastung"
+      "buy_deduction": "Kaufbelastung",
+      "dividend": "Dividende",
+      "interest": "Zinsen",
+      "fee": "Gebühr"
     }
   },
   "settings": {
@@ -445,5 +459,26 @@
     "trade_type_in_use": "Löschen nicht möglich — {n} Handelsgeschäfte verwenden diese Art",
     "invalid_quantity": "Menge darf die verbleibende Position ({n}) nicht überschreiten",
     "search_too_short": "Geben Sie mindestens 2 Zeichen ein, um zu suchen"
+  },
+  "events": {
+    "title": "Ereignisse",
+    "add": "Ereignis hinzufügen",
+    "type": "Typ",
+    "type_dividend": "Dividende",
+    "type_split": "Split",
+    "type_interest": "Zinsen",
+    "type_fee": "Gebühr",
+    "amount_per_share": "Betrag je Anteil",
+    "amount_total": "Betrag",
+    "ratio": "Verhältnis",
+    "ratio_hint": "2,0 = 2 zu 1, 0,5 = 1 zu 2 (umgekehrt)",
+    "instrument": "Instrument",
+    "event_date": "Datum",
+    "added": "Ereignis erfasst.",
+    "deleted": "Ereignis gelöscht.",
+    "delete_confirm": "Dieses Ereignis löschen?",
+    "empty": "Noch keine Ereignisse erfasst.",
+    "save_failed": "Ereignis konnte nicht gespeichert werden: {error}",
+    "col_action": "Aktion"
   }
 }
