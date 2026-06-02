@@ -1,6 +1,7 @@
 def test_defaults_present(client):
     s = client.get("/settings").json()
     assert s["currency"] == "USD"
+    assert s["base_currency"] == "USD"
     assert s["date_format"] == "MM/DD/YYYY"
     assert s["decimal_separator"] == "."
     assert s["fiscal_year_start_month"] == "1"
@@ -38,3 +39,16 @@ def test_valid_enumerations_accepted(client):
     assert s["fiscal_year_start_month"] == "4"
     assert s["decimal_separator"] == ","
     assert s["date_format"] == "YYYY-MM-DD"
+
+
+def test_base_currency_accepts_iso_codes(client):
+    r = client.put("/settings", json={"base_currency": "eur"})
+    assert r.status_code == 200
+    assert r.json()["base_currency"] == "EUR"  # normalized to uppercase
+
+
+def test_base_currency_rejects_bad_values(client):
+    assert client.put("/settings", json={"base_currency": "US"}).status_code == 400
+    assert client.put("/settings", json={"base_currency": "USDX"}).status_code == 400
+    assert client.put("/settings", json={"base_currency": "12$"}).status_code == 400
+    assert client.put("/settings", json={"base_currency": ""}).status_code == 400

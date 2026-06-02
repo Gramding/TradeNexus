@@ -24,6 +24,7 @@ SUPPORTED_LANGUAGES = {"en", "de"}
 ALLOWED_SETTINGS = {
     "display_name",
     "currency",
+    "base_currency",
     "language",
     "date_format",
     "decimal_separator",
@@ -76,6 +77,12 @@ def _validate_setting(key: str, value) -> str:
         if str(value) not in ("0", "1"):
             raise HTTPException(status_code=400, detail="date_format_manual_override must be '0' or '1'.")
         return str(value)
+
+    if key == "base_currency":
+        s = str(value or "").strip().upper()
+        if len(s) != 3 or not s.isalpha():
+            raise HTTPException(status_code=400, detail="base_currency must be a 3-letter ISO code (e.g. USD, EUR).")
+        return s
 
     # display_name, currency, default_broker_id: free-form strings.
     return "" if value is None else str(value)

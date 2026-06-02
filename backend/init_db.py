@@ -13,6 +13,7 @@ SEED_USER = ("TradeNexus User", "user@tradenexus.local")
 SEED_SETTINGS = [
     ("display_name", "Trader"),
     ("currency", "USD"),
+    ("base_currency", "USD"),
     ("language", "en"),
     ("date_format", "MM/DD/YYYY"),
     ("date_format_manual_override", "0"),
@@ -90,6 +91,10 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_price_cache_symbol_source ON price_cache(symbol, source)",
     "CREATE INDEX IF NOT EXISTS idx_instruments_symbol ON instruments(symbol)",
     "CREATE INDEX IF NOT EXISTS idx_instruments_ticker ON instruments(ticker)",
+    "CREATE INDEX IF NOT EXISTS idx_events_user_id ON events(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_events_user_date ON events(user_id, event_date DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_events_instrument ON events(instrument_id)",
+    "CREATE INDEX IF NOT EXISTS idx_fx_rates_pair ON fx_rates(from_currency, to_currency)",
 ]
 
 
@@ -317,6 +322,72 @@ def _migrate(conn):
 
     # Re-key price_cache to instrument symbols (needs instruments populated above).
     _migrate_price_cache_symbol(conn)
+
+    # Phase 1: foundation columns for options, shorts, and multi-currency.
+    # All have defaults so existing rows remain valid; new behavior lands in later
+    # phases. CHECK constraints from schema.sql don't apply to ALTER-added columns
+    # in SQLite — validation is enforced at the route layer (consistent with how
+    # trade_type is already handled).
+    _migrate_phase1_columns(conn)
+
+
+_PHASE1_TRADE_COLUMNS = [
+    ("direction",       "TEXT NOT NULL DEFAULT 'long'"),
+    ("multiplier",      "REAL NOT NULL DEFAULT 1"),
+    ("strike_price",    "REAL"),
+    ("expiration_date", "TEXT"),
+    ("underlying",      "TEXT"),
+    ("trade_currency",  "TEXT NOT NULL DEFAULT 'USD'"),
+    ("fx_rate",         "REAL NOT NULL DEFAULT 1"),
+]
+
+
+def _migrate_phase1_columns(conn):
+    """Add Phase 1 columns to `trades`, idempotently. Creates `events` and
+    `fx_rates` tables if missing (schema.sql also creates them on fresh installs;
+    this covers existing databases that pre-date the new tables)."""
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(trades)")
+    existing = {row[1] for row in cur.fetchall()}
+    added = []
+    for name, decl in _PHASE1_TRADE_COLUMNS:
+        if name not in existing:
+            cur.execute(f"ALTER TABLE trades ADD COLUMN {name} {decl}")
+            added.append(name)
+    if added:
+        print(f"Migration: added trades columns {added}")
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS events (
+            id            INTEGER  PRIMARY KEY AUTOINCREMENT,
+            user_id       INTEGER  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            instrument_id INTEGER  REFERENCES instruments(id),
+            event_type    TEXT     NOT NULL CHECK (event_type IN ('dividend', 'split', 'interest', 'fee')),
+            event_date    TEXT     NOT NULL,
+            amount        REAL,
+            ratio         REAL,
+            currency      TEXT     NOT NULL DEFAULT 'USD',
+            fx_rate       REAL     NOT NULL DEFAULT 1 CHECK (fx_rate > 0),
+            note          TEXT,
+            created_at    TEXT     NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fx_rates (
+            id            INTEGER  PRIMARY KEY AUTOINCREMENT,
+            from_currency TEXT     NOT NULL,
+            to_currency   TEXT     NOT NULL,
+            rate          REAL     NOT NULL CHECK (rate > 0),
+            fetched_at    TEXT     NOT NULL DEFAULT (datetime('now')),
+            source        TEXT     NOT NULL DEFAULT 'yahoo_finance',
+            UNIQUE(from_currency, to_currency, source)
+        )
+        """
+    )
+    conn.commit()
 
 
 def _bootstrap(conn, *, seed_demo_user: bool):
