@@ -1,8 +1,8 @@
 # TradeNexus
 
-A desktop application for tracking stock and options trades, positions, realized/unrealized P&L, cash flow, and portfolio analytics. TradeNexus runs entirely on your machine — a local FastAPI backend with a SQLite database, a vanilla-JS frontend, and an Electron shell that bundles them into a single installable app.
+A desktop application for tracking trades, positions, realized / unrealized P&L, cash flow, and portfolio analytics across **stocks, ETFs, options, bonds, crypto, forex, and futures** — long *and* short, in any currency. TradeNexus runs entirely on your machine: a local FastAPI backend with a SQLite database, a vanilla-JS frontend, and an Electron shell that bundles them into a single installable app.
 
-> All data lives in a local SQLite file (`~/TradeTracker/trades.db`). There is no cloud account, no telemetry, and no external database. The only network calls are to Yahoo Finance for price quotes.
+> All data lives in a local SQLite file (`~/TradeTracker/trades.db`). There is no cloud account, no telemetry, and no external database. The only network calls are to Yahoo Finance — for price quotes, instrument search, and FX rates.
 
 ---
 
@@ -15,6 +15,7 @@ A desktop application for tracking stock and options trades, positions, realized
 - [Installation (development)](#installation-development)
 - [Running in development](#running-in-development)
 - [Seeding mock data](#seeding-mock-data)
+- [Running tests](#running-tests)
 - [Building a distributable app](#building-a-distributable-app)
 - [Data, backups & configuration](#data-backups--configuration)
 - [Keyboard shortcuts](#keyboard-shortcuts)
@@ -25,16 +26,22 @@ A desktop application for tracking stock and options trades, positions, realized
 
 ## Features
 
-- **Trade tracking** — record buy/sell trades with ticker, type, quantity, price, broker, commission, and notes. Sortable, filterable, duplicable, and CSV-exportable.
-- **Positions** — open/partial lots grouped by ticker with average cost, cost basis, live current price, and unrealized P&L (sortable).
-- **Sell flow** — partial or full sells against specific buy lots, with commission-adjusted realized P&L recorded to a sell-lot ledger.
+- **Trade tracking** — record buy / sell-short trades with ticker, type, quantity, price, broker, commission, and notes. Sortable, filterable, duplicable, and CSV-exportable.
+- **Positions** — open / partial lots grouped by `(ticker, type, direction, strike, expiration)` so two calls at different strikes are distinct rows; shows average cost, cost basis, live current price, and unrealized P&L (sortable, both native and base currency).
+- **Long & short** — open longs with **Buy (long)** and shorts with **Sell short**. Close a long via the Sell modal; close a short via the Cover modal. Realized P&L is direction-aware so a falling price on a short is a profit.
+- **Options** — Call / Put with a contract **multiplier** (default 100), **strike**, **expiration**, and **underlying**. Total value, cost basis, cash flow, and P&L all carry the multiplier, so a $2.50 1-contract call is $250 of exposure, not $2.50.
+- **Bonds** — face value (default $1000), coupon rate, coupon frequency, maturity, and accrued interest at purchase. Price quoted as % of par; multiplier derives from `face_value / 100`. Accrued interest bumps the cash debit but stays out of cost basis so realized P&L is principal-only. Coupons are recorded as Interest events.
+- **Multi-currency** — every trade stores its native `trade_currency` and an `fx_rate` to the configured **base currency** (auto-fetched from Yahoo, overridable). The cash pool, realized P&L, and all stats aggregates are stored / summed in base currency; positions expose both native and base cost basis and unrealized P&L, so each leg captures both the price move *and* the FX move.
 - **Cash pool** — per-user balance tracking with deposits, withdrawals, and automatic buy/sell cash movements. The Add Trade form warns when a buy exceeds your cash balance.
-- **Analytics** — total/buy/sell volume, net position, commissions, realized P&L, monthly volume and trade-type breakdown charts, a cumulative growth chart with selectable ranges (3M / 6M / 1Y / **This fiscal year** / All), and a configurable fiscal-year window.
+- **Events** — record **dividends** (per-share × shares held on the event date), **splits** (retroactively scale every open lot — `q × p × multiplier` stays invariant), **interest** (cash credit), and **fees** (cash debit). Each event can be deleted; splits with later trades are blocked from deletion to keep cost basis honest.
+- **Sell flow** — partial or full sells against specific buy lots, with commission-adjusted realized P&L recorded to a sell-lot ledger. Cover flow mirrors this for shorts.
+- **Analytics** — total / buy / sell volume, net position, commissions, **realized P&L**, **dividend income**, **interest income**, **fees paid**; monthly-volume and trade-type breakdown charts; cumulative growth chart with selectable ranges (3M / 6M / 1Y / **This fiscal year** / All); configurable fiscal-year window.
 - **Brokers** — per-broker commission models (flat + per-unit), colors, and a configurable default broker.
-- **Trade types** — built-in (Stock, Call, Put, Other) plus user-defined custom types, with rename-cascades-to-trades and safe deletion.
-- **Global search** — a command-palette search bar (focus with `/`) across trades, positions, and cash transactions, with click-to-navigate and row highlighting.
-- **Settings** — display name, currency, date format, decimal separator, price-refresh interval, fiscal-year start; broker management; trade-type management; database backup/restore; and price-cache clearing.
-- **Convenience** — passive price autofill from cache on ticker blur, time-of-day greeting, light/dark theme, UI scaling, keyboard shortcuts, and a startup database backup (keeps the 7 most recent).
+- **Trade types** — nine built-ins (Stock, ETF, Crypto, Forex, Futures, Call, Put, Bond, Other) plus user-defined custom types, with rename-cascades-to-trades and safe deletion.
+- **Global search** — a command-palette search bar (focus with `/`) across trades, positions (including shorts), and cash transactions, with click-to-navigate and row highlighting.
+- **Settings** — display name, currency, **base currency**, date format, decimal separator, price-refresh interval, fiscal-year start; broker management; trade-type management; database backup / restore; and price-cache clearing.
+- **Convenience** — passive price autofill from cache on ticker blur, time-of-day greeting, light / dark theme, UI scaling, keyboard shortcuts, and a startup database backup (keeps the 7 most recent).
+- **Security** — CSP on the renderer, CORS restricted to `localhost`, vendored frontend libraries (no third-party CDN at runtime), and a global error handler that surfaces silent fetch failures as toasts.
 
 ---
 
@@ -45,30 +52,44 @@ A desktop application for tracking stock and options trades, positions, realized
 │                                                                          │
 │   electron/main.js                                                       │
 │     • spawns the backend binary, polls /health, then opens the window    │
-│     • loads frontend/index.html into a BrowserWindow                      │
+│     • loads frontend/index.html into a BrowserWindow (CSP-enforced)      │
 │                                                                          │
 │   ┌─────────────────────┐         HTTP (localhost:8765)                  │
 │   │  Frontend (vanilla)  │  ───────────────────────────►  ┌───────────┐  │
 │   │  index.html          │                                │  FastAPI   │  │
 │   │  static/js/app.js     │  ◄───────────────────────────  │  backend   │  │
 │   │  static/js/formatting │            JSON                 │  (uvicorn) │  │
-│   │  Chart.js (CDN)       │                                └─────┬─────┘  │
-│   └─────────────────────┘                                        │        │
-│                                                            SQLite │        │
+│   │  static/js/vendor/    │                                └─────┬─────┘  │
+│   │    chart.umd.js       │                                      │        │
+│   └─────────────────────┘                                  SQLite │        │
 │                                                   ~/TradeTracker/ │        │
 │                                                        trades.db ◄┘        │
 └──────────────────────────────────────────────────────────────────────────┘
                                                           │
-                                                   Yahoo Finance (yfinance)
+                                          Yahoo Finance (prices, search, FX)
 ```
 
 | Layer    | Technology |
 |----------|------------|
 | Backend  | Python · FastAPI · Uvicorn · SQLite (stdlib `sqlite3`) · yfinance |
-| Frontend | Plain HTML/CSS/JavaScript (no framework) · Chart.js (via CDN) |
+| Frontend | Plain HTML/CSS/JavaScript (no framework) · Chart.js (vendored locally) |
 | Desktop  | Electron · electron-builder · PyInstaller (backend → single binary) |
 
-The backend listens on **`http://localhost:8765`** and exposes a health check at `/health`. The frontend's API base URL is hardcoded to that address in `frontend/static/js/app.js`.
+The backend listens on **`http://localhost:8765`** and exposes a health check at `/health`. CORS is restricted to `null` (Electron's `file://` origin) and `http://localhost:8765`. The frontend's API base URL is hardcoded to that address in `frontend/static/js/app.js`.
+
+### Data model
+
+| Table | Purpose |
+|-------|---------|
+| `users` | Per-user identity (tracker is single-machine, multi-profile). |
+| `instruments` | Yahoo symbol + ticker + name + asset class + currency for known securities. |
+| `trades` | One row per trade. Carries `direction`, `multiplier`, option fields (`strike_price`, `expiration_date`, `underlying`), currency fields (`trade_currency`, `fx_rate`), and bond fields (`face_value`, `coupon_rate`, `coupon_frequency`, `maturity_date`, `accrued_interest`). |
+| `sell_lots` | Shared realized-P&L ledger for sells (close a long) and covers (close a short). `realized_pnl` is stored in **base currency**. |
+| `cash_pool` | One row per cash movement (`deposit`, `withdrawal`, `buy_deduction`, `sell_proceeds`, `dividend`, `interest`, `fee`). All amounts in **base currency**. |
+| `events` | Dividends, splits, interest, fees — separate from trades since they don't open or close positions. |
+| `price_cache` | Yahoo price quotes keyed by symbol + source. |
+| `fx_rates` | FX-rate cache keyed by `(from_currency, to_currency, source)`. |
+| `brokers`, `trade_types`, `app_settings` | Configuration. |
 
 ---
 
@@ -163,12 +184,17 @@ Run the API directly with uvicorn (auto-reload-friendly while editing Python):
 .venv/bin/python backend/entrypoint.py
 ```
 
-This serves the API on `http://localhost:8765`. Then open the frontend in a browser. Because the frontend fetches from `localhost:8765` (and the backend allows all CORS origins), the simplest approach is a static server:
+This serves the API on `http://localhost:8765`. Then open the frontend in a browser. The backend's CORS is restricted to `null` (Electron's `file://` origin) and `http://localhost:8765`, so the simplest dev workflow is to serve the frontend from the same port the API runs on, or to open `frontend/index.html` directly:
 
 ```bash
+# Option 1: open the HTML file directly (works with the 'null' origin).
+xdg-open frontend/index.html        # Linux
+open      frontend/index.html        # macOS
+
+# Option 2: serve from a different port — in that case, temporarily add
+# "http://localhost:5173" to allow_origins in backend/main.py, or use Option 1.
 cd frontend
 python3 -m http.server 5173
-# then visit http://localhost:5173
 ```
 
 Edit `frontend/static/js/*.js` or `style.css` and refresh the page — no rebuild needed.
@@ -207,7 +233,7 @@ The backend has a pytest suite that runs against a **throwaway SQLite database**
 .venv/bin/python -m pytest                               # run the suite
 ```
 
-Coverage includes users, trades (creation/validation/filtering/update/delete), the sell flow (partial/full/oversell + cash effects), cash deposits/withdrawals, brokers & commissions, trade types (validation, rename-cascade, delete rules), settings validation, global search, stats / fiscal-year windowing, and the price cache. Tests live in `backend/tests/`.
+Coverage includes users, trades (creation / validation / filtering / update / delete), the sell flow (partial / full / oversell + cash effects), the **cover flow** for shorts, cash deposits / withdrawals, brokers & commissions, trade types (validation, rename-cascade, delete rules), settings validation, global search (incl. shorts), stats / fiscal-year windowing, the price + FX caches, the **options multiplier** end-to-end, **multi-currency** trades (foreign cash, FX-aware realized P&L, base-currency stats), **events** (dividends with date eligibility, splits with cost-basis invariant, interest / fees, delete reversals, stats fields), **bonds** (face value, accrued interest, principal-only realized P&L), and the schema migration from a pre-Phase-1 database. Tests live in `backend/tests/`.
 
 ---
 
@@ -270,7 +296,7 @@ The installers are **unsigned** (no code-signing identity configured), so on fir
 
 - **Database location:** `~/TradeTracker/trades.db` (SQLite) — in the user's **home directory**, not inside the app bundle. `Path.home()` resolves per-OS: `/home/<user>` on Linux (including the AppImage), `/Users/<user>` on macOS, `C:\Users\<user>` on Windows. It is created automatically on first launch and **persists across app updates** (replacing the AppImage/installer never touches it). The path is fixed and not currently configurable.
 - **Backups:** on every startup the backend copies the DB to `~/TradeTracker/backups/trades_YYYY-MM-DD_HHMMSS.db`, keeping only the **7 most recent**. You can also download/restore a backup from **Settings → Data**.
-- **Settings** are stored in the `app_settings` table and edited in **Settings → General** (display name, currency, date format, decimal separator, price-refresh interval, fiscal-year start). They auto-save on change.
+- **Settings** are stored in the `app_settings` table and edited in **Settings → General** (display name, currency, base currency, date format, decimal separator, price-refresh interval, fiscal-year start). `currency` and `base_currency` are kept in sync so the app has one reporting currency. Settings auto-save on change.
 - **Price cache:** Yahoo Finance quotes are cached in the `price_cache` table. Clear it from **Settings → Data** if prices look stale.
 - **Port:** the backend always uses **8765**. Make sure it's free (see Troubleshooting).
 - `.env` is intentionally empty — no connection string is needed.
@@ -304,30 +330,38 @@ All routes are served from `http://localhost:8765`. Selected endpoints:
 **Trades**
 - `GET /users/{user_id}/trades` (filters: `ticker`, `trade_type`, `action`)
 - `POST /users/{user_id}/trades` · `PUT /trades/{trade_id}` · `DELETE /trades/{trade_id}`
-- `POST /trades/{buy_trade_id}/sell`
+- `POST /trades/{buy_trade_id}/sell` — close a long lot
+- `POST /trades/{short_trade_id}/cover` — buy-to-close a short lot
 - `GET /users/{user_id}/trades/export` (CSV)
 
 **Positions & prices**
 - `GET /users/{user_id}/positions` · `GET /users/{user_id}/positions/prices`
-- `GET /prices/{ticker}` (`?cache_only=true` for a no-fetch cache read) · `POST /prices/refresh`
+- `GET /prices/{symbol}` (`?cache_only=true` for a no-fetch cache read) · `POST /prices/refresh`
+- `GET /fx/{from}/{to}` (`?cache_only=true`) — FX rate, used for multi-currency conversion
 
 **Cash**
 - `GET /users/{user_id}/cash` · `POST /users/{user_id}/cash/deposit` · `POST /users/{user_id}/cash/withdraw`
+
+**Events (dividends, splits, interest, fees)**
+- `GET /users/{user_id}/events` (`?event_type=`) · `POST /users/{user_id}/events` · `DELETE /events/{event_id}`
 
 **Analytics**
 - `GET /users/{user_id}/stats` (`?fiscal_year_start_month=`) · `GET /users/{user_id}/stats/growth`
 
 **Search**
-- `GET /search?user_id=&q=` — grouped trades / positions / cash transactions (min 2 chars)
+- `GET /search?user_id=&q=` — grouped trades / positions (longs and shorts) / cash transactions (min 2 chars)
 
 **Brokers**
 - `GET /brokers` · `POST /brokers` · `PUT /brokers/{broker_id}` · `DELETE /brokers/{broker_id}`
+
+**Instruments**
+- `GET /instruments` · `GET /instruments/search?q=` · `POST /instruments` · `PUT /instruments/{id}` · `DELETE /instruments/{id}`
 
 **Trade types**
 - `GET /trade-types` · `POST /trade-types` · `PUT /trade-types/{id}` · `DELETE /trade-types/{id}`
 
 **Settings & data**
-- `GET /settings` · `PUT /settings`
+- `GET /settings` · `PUT /settings` (the `currency` and `base_currency` settings are kept in sync as the single reporting currency)
 - `GET /settings/backup` · `POST /settings/restore`
 - `GET /settings/price-cache` · `DELETE /settings/price-cache`
 
