@@ -1220,11 +1220,11 @@ def get_positions(user_id: int):
         # synthetic close rows are status='closed' and never match.
         cur.execute(
             "SELECT id, ticker, trade_type, trade_date, remaining_quantity, price_per_unit, status, "
-            "multiplier, direction, trade_currency, fx_rate "
+            "multiplier, direction, trade_currency, fx_rate, strike_price, expiration_date "
             "FROM trades "
             "WHERE user_id = ? AND status IN ('open', 'partial') "
             "AND ((action = 'buy' AND direction = 'long') OR (action = 'sell' AND direction = 'short')) "
-            "ORDER BY ticker, trade_type, direction, trade_date, id",
+            "ORDER BY ticker, trade_type, direction, expiration_date, strike_price, trade_date, id",
             (user_id,),
         )
         rows = cur.fetchall()
@@ -1236,19 +1236,21 @@ def get_positions(user_id: int):
     finally:
         conn.close()
 
-    # Group by (ticker, trade_type, direction) so a long and a short on the same
-    # ticker stay separate. avg_cost_per_unit and total_cost_basis are in the
-    # position's native currency; total_cost_basis_base converts via each lot's
-    # stored fx_rate for a base-currency portfolio view.
+    # Group by (ticker, trade_type, direction, strike, expiration) so a long and a
+    # short on the same ticker stay separate, AND so two calls on the same name
+    # with different strikes / expirations stay separate (they aren't fungible).
+    # avg_cost_per_unit and total_cost_basis are in the position's native currency;
+    # total_cost_basis_base converts via each lot's stored fx_rate.
     groups: dict[tuple, dict] = {}
     for (trade_id, ticker, trade_type, trade_date, remaining_qty, price_per_unit,
-         status, multiplier, direction, trade_currency, fx_rate) in rows:
+         status, multiplier, direction, trade_currency, fx_rate,
+         strike_price, expiration_date) in rows:
         remaining_qty = float(remaining_qty)
         price_per_unit = float(price_per_unit)
         multiplier = float(multiplier) if multiplier is not None else 1.0
         fx_rate = float(fx_rate) if fx_rate is not None else 1.0
         direction = direction or "long"
-        key = (ticker, trade_type, direction)
+        key = (ticker, trade_type, direction, strike_price, expiration_date)
         if key not in groups:
             groups[key] = {
                 "ticker": ticker,
@@ -1256,6 +1258,8 @@ def get_positions(user_id: int):
                 "direction": direction,
                 "multiplier": multiplier,
                 "currency": trade_currency or "USD",
+                "strike_price": float(strike_price) if strike_price is not None else None,
+                "expiration_date": expiration_date,
                 "total_remaining_quantity": 0.0,
                 "total_raw_cost": 0.0,
                 "total_cost_basis": 0.0,
@@ -1286,6 +1290,8 @@ def get_positions(user_id: int):
             "direction": g["direction"],
             "multiplier": g["multiplier"],
             "currency": g["currency"],
+            "strike_price": g["strike_price"],
+            "expiration_date": g["expiration_date"],
             "total_remaining_quantity": round(total_qty, 10),
             "avg_cost_per_unit": round(g["total_raw_cost"] / total_qty, 10) if total_qty else 0.0,
             # For a short, this is the proceeds received (the basis to compare a
@@ -1779,28 +1785,30 @@ def _search_trades_bucket(cur, user_id, like, cursor) -> dict:
 
 
 def _search_positions_bucket(cur, user_id, like, cursor) -> dict:
-    """Open/partial buy lots whose ticker matches, grouped by (ticker, trade_type).
+    """Open/partial lots (long opens + short opens) whose ticker matches, grouped
+    by (ticker, trade_type, direction).
 
-    Mirrors the grouping of get_positions: the same ticker held under two trade
-    types is two distinct positions, not one merged row. Positions are aggregates
-    with no row id, so the keyset runs on the (ticker, trade_type) tuple, stored
-    in the cursor's last_val as a [ticker, trade_type] pair (last_id is unused)."""
+    Mirrors get_positions: the same ticker held in two trade types or in opposite
+    directions is two distinct positions, not one merged row. Positions are
+    aggregates with no row id, so the keyset runs on the (ticker, trade_type,
+    direction) tuple stored in the cursor's last_val (last_id is unused)."""
     sql = (
-        "SELECT ticker, trade_type, "
+        "SELECT ticker, trade_type, direction, "
         "SUM(remaining_quantity) AS rem, "
         "SUM(remaining_quantity * price_per_unit) AS raw_cost, "
         "SUM(remaining_quantity * price_per_unit * multiplier) AS basis "
         "FROM trades "
-        "WHERE user_id = ? AND action = 'buy' AND status IN ('open', 'partial') "
+        "WHERE user_id = ? AND status IN ('open', 'partial') "
+        "AND ((action = 'buy' AND direction = 'long') OR (action = 'sell' AND direction = 'short')) "
         "AND ticker LIKE ?"
     )
     params = [user_id, like]
     if cursor is not None:
         last_val, _ = _decode_cursor(cursor)
-        last_ticker, last_type = last_val
-        sql += " AND (ticker, trade_type) > (?, ?)"
-        params.extend([last_ticker, last_type])
-    sql += " GROUP BY ticker, trade_type ORDER BY ticker ASC, trade_type ASC LIMIT ?"
+        last_ticker, last_type, last_dir = last_val
+        sql += " AND (ticker, trade_type, direction) > (?, ?, ?)"
+        params.extend([last_ticker, last_type, last_dir])
+    sql += " GROUP BY ticker, trade_type, direction ORDER BY ticker ASC, trade_type ASC, direction ASC LIMIT ?"
     params.append(_SEARCH_LIMIT + 1)
 
     cur.execute(sql, params)
@@ -1809,18 +1817,19 @@ def _search_positions_bucket(cur, user_id, like, cursor) -> dict:
     rows = rows[:_SEARCH_LIMIT]
     results = []
     for r in rows:
-        rem = float(r[2] or 0)
-        raw_cost = float(r[3] or 0)
-        basis = float(r[4] or 0)
+        rem = float(r[3] or 0)
+        raw_cost = float(r[4] or 0)
+        basis = float(r[5] or 0)
         results.append({
             "ticker":                   r[0],
             "trade_type":               r[1],
+            "direction":                r[2] or "long",
             "total_remaining_quantity": round(rem, 10),
             "avg_cost_per_unit":        round(raw_cost / rem, 10) if rem else 0.0,
             "total_cost_basis":         round(basis, 10),
         })
     next_cursor = (
-        _encode_cursor([results[-1]["ticker"], results[-1]["trade_type"]], 0)
+        _encode_cursor([results[-1]["ticker"], results[-1]["trade_type"], results[-1]["direction"]], 0)
         if has_more and results else None
     )
     return _bucket(results, has_more, next_cursor)

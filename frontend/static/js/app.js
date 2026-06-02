@@ -2099,6 +2099,25 @@ function currencyTagHtml(code) {
   return `<span class="currency-tag">${escHtml(code)}</span>`;
 }
 
+// Compact "$150 6/19" tag identifying an option position, so two calls on the
+// same name with different strikes / expirations are visually distinct.
+function optionContractTagHtml(p) {
+  if (p.strike_price == null && !p.expiration_date) return '';
+  const parts = [];
+  if (p.strike_price != null) parts.push(formatCurrencyIn(p.strike_price, p.currency));
+  if (p.expiration_date) parts.push(formatDate(p.expiration_date));
+  return `<span class="option-tag">${escHtml(parts.join(' '))}</span>`;
+}
+
+// Hover title showing the base-currency unrealized P&L for foreign positions.
+// Same-currency positions skip the duplicate.
+function unrealizedBaseTitle(p) {
+  if (p.unrealized_pnl_base == null) return '';
+  if (!p.currency || p.currency === reportingCurrency()) return '';
+  const sign = p.unrealized_pnl_base >= 0 ? '+' : '';
+  return `${sign}${formatCurrencyIn(p.unrealized_pnl_base, reportingCurrency())} in ${reportingCurrency()}`;
+}
+
 // Small broker chip (color dot + name) shown on broker-scoped position rows.
 function brokerTagHtml(name, color) {
   const dot = color ? `<span class="pos-broker-dot" style="background:${escHtml(color)}"></span>` : '';
@@ -2219,6 +2238,7 @@ function renderPositionsRows(positions) {
         ${tickerLinkHtml(p.ticker, p.name)}
         ${p.direction === 'short' ? shortBadgeHtml() : ''}
         ${currencyTagHtml(p.currency)}
+        ${optionContractTagHtml(p)}
         ${p.broker_scoped ? brokerTagHtml(p.broker_name, p.broker_color) : ''}
       </td>
       <td>${badge(p.trade_type)}</td>
@@ -2227,7 +2247,7 @@ function renderPositionsRows(positions) {
       <td class="num">${formatCurrencyIn(p.total_cost_basis, p.currency)}</td>
       <td class="num price-col">${_priceHtml(p.current_price, p.currency)}</td>
       <td class="num price-col">${_priceHtml(p.current_value, p.currency)}</td>
-      <td class="num price-col">${_pnlHtml(p.unrealized_pnl, p.currency)}</td>
+      <td class="num price-col" title="${unrealizedBaseTitle(p)}">${_pnlHtml(p.unrealized_pnl, p.currency)}</td>
       <td class="num price-col">${_pnlPctHtml(p.unrealized_pnl_pct)}</td>
       <td><button class="sell-btn">${p.direction === 'short'
             ? escHtml(i18n.t('positions.cover')) : escHtml(i18n.t('positions.sell'))}</button></td>
