@@ -330,6 +330,10 @@ def _migrate(conn):
     # trade_type is already handled).
     _migrate_phase1_columns(conn)
 
+    # Phase 5: widen cash_pool.transaction_type to include event-driven flows
+    # (dividend, interest, fee). Splits do not move cash, so they have no type.
+    _migrate_cash_pool_event_types(conn)
+
 
 _PHASE1_TRADE_COLUMNS = [
     ("direction",       "TEXT NOT NULL DEFAULT 'long'"),
@@ -340,6 +344,50 @@ _PHASE1_TRADE_COLUMNS = [
     ("trade_currency",  "TEXT NOT NULL DEFAULT 'USD'"),
     ("fx_rate",         "REAL NOT NULL DEFAULT 1"),
 ]
+
+
+_CASH_POOL_NEW_DDL = """
+CREATE TABLE cash_pool_new (
+    id               INTEGER  PRIMARY KEY AUTOINCREMENT,
+    user_id          INTEGER  NOT NULL REFERENCES users(id),
+    transaction_type TEXT     NOT NULL CHECK (transaction_type IN ('deposit', 'withdrawal', 'sell_proceeds', 'buy_deduction', 'dividend', 'interest', 'fee')),
+    amount           REAL     NOT NULL,
+    reference_id     INTEGER,
+    note             TEXT,
+    created_at       TEXT     NOT NULL DEFAULT (datetime('now'))
+)
+"""
+
+_CASH_POOL_COLS = "id, user_id, transaction_type, amount, reference_id, note, created_at"
+
+
+def _migrate_cash_pool_event_types(conn):
+    """Rebuild cash_pool so its transaction_type CHECK accepts the Phase 5 event
+    types. No-op when the table already lists 'dividend' (already migrated or
+    fresh install via schema.sql)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='cash_pool'"
+    ).fetchone()
+    if not row or "'dividend'" in row[0]:
+        return
+
+    prev_iso = conn.isolation_level
+    conn.isolation_level = None
+    try:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("BEGIN")
+        conn.execute(_CASH_POOL_NEW_DDL)
+        conn.execute(f"INSERT INTO cash_pool_new ({_CASH_POOL_COLS}) SELECT {_CASH_POOL_COLS} FROM cash_pool")
+        conn.execute("DROP TABLE cash_pool")
+        conn.execute("ALTER TABLE cash_pool_new RENAME TO cash_pool")
+        conn.execute("COMMIT")
+        problems = conn.execute("PRAGMA foreign_key_check").fetchall()
+        conn.execute("PRAGMA foreign_keys=ON")
+        if problems:
+            raise RuntimeError(f"Foreign-key check failed after cash_pool rebuild: {problems}")
+        print("Migration: rebuilt cash_pool to accept event transaction types")
+    finally:
+        conn.isolation_level = prev_iso
 
 
 def _migrate_phase1_columns(conn):

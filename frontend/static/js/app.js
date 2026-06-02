@@ -317,7 +317,7 @@ function switchTab(name, opts = {}) {
   });
   if (name === 'trades')     loadTrades();
   if (name === 'positions')  loadPositions();
-  if (name === 'cash')       loadCash();
+  if (name === 'cash')     { loadCash(); loadEvents(); }
   if (name === 'analytics')  loadAnalytics();
   if (name === 'add-trade') {
     loadFormCashBalance();  // cache the balance once, on open (re-fetched each open)
@@ -1791,6 +1791,150 @@ async function loadPositions() {
     positionsSpinner.classList.add('hidden');
   }
 }
+
+// ── Events: dividends, splits, interest, fees ──────────────────────────────────
+const eventsTbody     = document.getElementById('events-tbody');
+const eventsEmpty     = document.getElementById('events-empty');
+const eventsList      = document.getElementById('event-instrument-list');
+const addEventForm    = document.getElementById('add-event-form');
+const eventTypeEl     = document.getElementById('event-type');
+const eventDateEl     = document.getElementById('event-date');
+const eventInstrEl    = document.getElementById('event-instrument');
+const eventInstrRow   = document.getElementById('event-instrument-row');
+const eventAmountEl   = document.getElementById('event-amount');
+const eventRatioEl    = document.getElementById('event-ratio');
+const eventRatioHint  = document.getElementById('event-ratio-hint');
+const eventNoteEl     = document.getElementById('event-note');
+const eventError      = document.getElementById('add-event-error');
+
+let _instrumentsByTicker = new Map();
+
+async function loadEvents() {
+  if (!activeUserId) return;
+  // Refresh the instrument datalist once per session-ish (cheap call); the form
+  // resolves ticker -> instrument_id from this map on submit.
+  try {
+    const instruments = await apiFetch('/instruments');
+    _instrumentsByTicker = new Map(instruments.map(i => [String(i.ticker).toUpperCase(), i]));
+    eventsList.innerHTML = instruments
+      .map(i => `<option value="${escHtml(i.ticker)}">${escHtml(i.name || i.ticker)}</option>`)
+      .join('');
+  } catch (e) {
+    console.warn('Failed to load instruments for events form:', e.message);
+  }
+  try {
+    const events = await apiFetch(`/users/${activeUserId}/events`);
+    renderEvents(events);
+  } catch (e) {
+    showToast(e.message, true);
+  }
+}
+
+function renderEvents(events) {
+  eventsTbody.innerHTML = '';
+  if (!events.length) { eventsEmpty.classList.remove('hidden'); return; }
+  eventsEmpty.classList.add('hidden');
+  events.forEach(e => {
+    const tr = document.createElement('tr');
+    const typeLabel = i18n.t('events.type_' + e.event_type);
+    const detail = e.event_type === 'split'
+      ? `${formatNumber(e.ratio, 4)}×`
+      : formatCurrencyIn(e.amount * (e.event_type === 'fee' ? -1 : 1), e.currency);
+    tr.innerHTML = `
+      <td>${formatDate(e.event_date)}</td>
+      <td><span class="badge badge-${e.event_type}">${escHtml(typeLabel)}</span></td>
+      <td>${escHtml(e.ticker || '—')}</td>
+      <td class="num">${detail}</td>
+      <td class="notes-cell" title="${escHtml(e.note ?? '')}">${escHtml(e.note ?? '—')}</td>
+      <td><button class="event-delete-btn secondary" data-id="${e.id}">×</button></td>
+    `;
+    tr.querySelector('.event-delete-btn').addEventListener('click', () => deleteEvent(e.id));
+    eventsTbody.appendChild(tr);
+  });
+}
+
+async function deleteEvent(id) {
+  if (!confirm(i18n.t('events.delete_confirm'))) return;
+  try {
+    await apiFetch(`/events/${id}`, { method: 'DELETE' });
+    showToast(i18n.t('events.deleted'));
+    loadEvents();
+    loadCash();      // cash balance changed
+  } catch (e) {
+    showToast(e.message, true);
+  }
+}
+
+// Show only the fields each event type needs: instrument is required for
+// dividend/split, amount is for everything except split, ratio is only split.
+function updateEventFormFields() {
+  const type = eventTypeEl.value;
+  const isSplit = type === 'split';
+  const needsInstrument = type === 'dividend' || type === 'split';
+  eventInstrRow.classList.toggle('hidden', !needsInstrument);
+  eventAmountEl.classList.toggle('hidden', isSplit);
+  eventRatioEl.classList.toggle('hidden', !isSplit);
+  eventRatioHint.classList.toggle('hidden', !isSplit);
+  if (isSplit) {
+    eventAmountEl.removeAttribute('required');
+    eventRatioEl.setAttribute('required', '');
+  } else {
+    eventAmountEl.setAttribute('required', '');
+    eventRatioEl.removeAttribute('required');
+  }
+  eventAmountEl.placeholder = i18n.t(type === 'dividend' ? 'events.amount_per_share' : 'events.amount_total');
+}
+
+document.getElementById('btn-add-event').addEventListener('click', () => {
+  addEventForm.classList.toggle('hidden');
+  if (!addEventForm.classList.contains('hidden')) {
+    eventDateEl.value = todayISO();
+    updateEventFormFields();
+    eventTypeEl.focus();
+  }
+});
+
+document.getElementById('btn-cancel-event').addEventListener('click', () => {
+  addEventForm.reset();
+  addEventForm.classList.add('hidden');
+  clearError(eventError);
+});
+
+eventTypeEl.addEventListener('change', updateEventFormFields);
+
+addEventForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!activeUserId) return;
+  clearError(eventError);
+  const type = eventTypeEl.value;
+  const payload = { event_type: type, event_date: eventDateEl.value, note: eventNoteEl.value.trim() || null };
+  if (type === 'dividend' || type === 'split') {
+    const inst = _instrumentsByTicker.get(eventInstrEl.value.trim().toUpperCase());
+    if (!inst) {
+      showError(eventError, i18n.t('events.save_failed', { error: `Unknown instrument: ${eventInstrEl.value}` }));
+      return;
+    }
+    payload.instrument_id = inst.id;
+  }
+  if (type === 'split') payload.ratio = parseFloat(eventRatioEl.value);
+  else                  payload.amount = parseFloat(eventAmountEl.value);
+
+  const btn = document.getElementById('btn-save-event');
+  btn.disabled = true;
+  try {
+    await apiFetch(`/users/${activeUserId}/events`, { method: 'POST', body: JSON.stringify(payload) });
+    showToast(i18n.t('events.added'));
+    addEventForm.reset();
+    addEventForm.classList.add('hidden');
+    loadEvents();
+    loadCash();
+    if (type === 'split') loadPositions();   // split adjusts open lots
+  } catch (e) {
+    showError(eventError, i18n.t('events.save_failed', { error: e.message }));
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // ── Helpers for price cells ────────────────────────────────────────────────────
 

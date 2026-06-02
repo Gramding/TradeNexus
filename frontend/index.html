@@ -321,6 +321,57 @@
             </form>
           </div>
 
+          <!-- Events: dividends, splits, interest, fees. Affects cash, so it lives
+               in the Cash tab next to the running ledger. -->
+          <div id="events-section">
+            <div id="events-header">
+              <h3 data-i18n="events.title">Events</h3>
+              <button type="button" id="btn-add-event" class="secondary"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg><span data-i18n="events.add">Add event</span></button>
+            </div>
+            <form id="add-event-form" class="add-event-form hidden">
+              <div class="form-row">
+                <select id="event-type" required>
+                  <option value="dividend" data-i18n="events.type_dividend">Dividend</option>
+                  <option value="split" data-i18n="events.type_split">Split</option>
+                  <option value="interest" data-i18n="events.type_interest">Interest</option>
+                  <option value="fee" data-i18n="events.type_fee">Fee</option>
+                </select>
+                <input id="event-date" type="date" required />
+              </div>
+              <div class="form-row" id="event-instrument-row">
+                <input id="event-instrument" type="text" autocomplete="off"
+                       list="event-instrument-list"
+                       data-i18n-placeholder="events.instrument" placeholder="Instrument (ticker)" />
+                <datalist id="event-instrument-list"></datalist>
+              </div>
+              <div class="form-row">
+                <input id="event-amount" type="number" min="0" step="any" data-i18n-placeholder="events.amount_total" placeholder="Amount" />
+                <input id="event-ratio" type="number" min="0" step="any" class="hidden" data-i18n-placeholder="events.ratio" placeholder="2.0" />
+              </div>
+              <p id="event-ratio-hint" class="field-hint hidden" data-i18n="events.ratio_hint">2.0 = 2-for-1 forward, 0.5 = 1-for-2 reverse</p>
+              <div class="form-row">
+                <input id="event-note" type="text" data-i18n-placeholder="cash.note_optional" placeholder="Note (optional)" autocomplete="off" />
+                <button type="submit" id="btn-save-event" data-i18n="common.add">Add</button>
+                <button type="button" id="btn-cancel-event" class="secondary" data-i18n="common.cancel">Cancel</button>
+              </div>
+              <div id="add-event-error" class="inline-error hidden"></div>
+            </form>
+            <table id="events-table">
+              <thead>
+                <tr>
+                  <th data-i18n="events.event_date">Date</th>
+                  <th data-i18n="events.type">Type</th>
+                  <th data-i18n="events.instrument">Instrument</th>
+                  <th class="num" data-i18n="events.amount_total">Amount</th>
+                  <th data-i18n="cash.columns.note">Note</th>
+                  <th data-i18n="events.col_action">Action</th>
+                </tr>
+              </thead>
+              <tbody id="events-tbody"></tbody>
+            </table>
+            <p id="events-empty" class="placeholder hidden" data-i18n="events.empty">No events recorded yet.</p>
+          </div>
+
           <div id="cash-spinner" class="spinner-wrap hidden">
             <div class="spinner"></div>
           </div>

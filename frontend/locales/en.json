@@ -236,7 +236,10 @@
       "deposit": "Deposit",
       "withdrawal": "Withdrawal",
       "sell_proceeds": "Sell Proceeds",
-      "buy_deduction": "Buy Deduction"
+      "buy_deduction": "Buy Deduction",
+      "dividend": "Dividend",
+      "interest": "Interest",
+      "fee": "Fee"
     }
   },
   "settings": {
@@ -445,5 +448,26 @@
     "trade_type_in_use": "Cannot delete — {n} trades use this type",
     "invalid_quantity": "Quantity cannot exceed remaining position ({n})",
     "search_too_short": "Enter at least 2 characters to search"
+  },
+  "events": {
+    "title": "Events",
+    "add": "Add event",
+    "type": "Type",
+    "type_dividend": "Dividend",
+    "type_split": "Split",
+    "type_interest": "Interest",
+    "type_fee": "Fee",
+    "amount_per_share": "Amount per share",
+    "amount_total": "Amount",
+    "ratio": "Ratio",
+    "ratio_hint": "2.0 = 2-for-1 forward, 0.5 = 1-for-2 reverse",
+    "instrument": "Instrument",
+    "event_date": "Date",
+    "added": "Event recorded.",
+    "deleted": "Event deleted.",
+    "delete_confirm": "Delete this event?",
+    "empty": "No events recorded yet.",
+    "save_failed": "Could not save event: {error}",
+    "col_action": "Action"
   }
 }

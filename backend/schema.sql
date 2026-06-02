@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS sell_lots (
 CREATE TABLE IF NOT EXISTS cash_pool (
     id               INTEGER  PRIMARY KEY AUTOINCREMENT,
     user_id          INTEGER  NOT NULL REFERENCES users(id),
-    transaction_type TEXT     NOT NULL CHECK (transaction_type IN ('deposit', 'withdrawal', 'sell_proceeds', 'buy_deduction')),
+    transaction_type TEXT     NOT NULL CHECK (transaction_type IN ('deposit', 'withdrawal', 'sell_proceeds', 'buy_deduction', 'dividend', 'interest', 'fee')),
     amount           REAL     NOT NULL,
     reference_id     INTEGER,
     note             TEXT,
