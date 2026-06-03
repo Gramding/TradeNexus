@@ -1,7 +1,7 @@
 {
   "name": "tradenexus",
-  "version": "0.0.4",
-  "description": "Stock trade and options tracker",
+  "version": "0.1.0",
+  "description": "Local-only trade tracker — stocks, ETFs, options, bonds, crypto, forex, futures; long or short; in any currency.",
   "author": "TradeNexus",
   "main": "electron/main.js",
   "scripts": {
