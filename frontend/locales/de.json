@@ -511,6 +511,10 @@
     "tour_analytics_title": "Analytics",
     "tour_analytics_body": "Volumen, realisierte P&L, Dividenden/Zinsen, Gebühren, Monatsverteilungen und ein kumulatives Wachstumsdiagramm mit Geschäftsjahres-Fenster.",
     "tour_help_title": "Das war's",
-    "tour_help_body": "Klicke diesen Button (oder drücke ?) für die Tastenkürzel. Der Kompass daneben startet diese Tour erneut."
+    "tour_help_body": "Klicke diesen Button (oder drücke ?) für die Tastenkürzel. Der Kompass daneben startet diese Tour erneut.",
+    "tour_users_first_title": "Mit einem Nutzer starten",
+    "tour_users_first_body": "Jeder Nutzer hat ein eigenes Portfolio. Klicke das + oben, um einen anzulegen — sobald ein Nutzer ausgewählt ist, erscheinen die Tabs Trades / Positionen / Cash / Analytics und du kannst die vollständige Tour erneut starten.",
+    "tour_help_first_title": "Fertig",
+    "tour_help_first_body": "Lege einen Nutzer an, dann klicke den Kompass jederzeit, um die Tour erneut zu starten. Der ?-Button daneben zeigt die Tastenkürzel."
   }
 }

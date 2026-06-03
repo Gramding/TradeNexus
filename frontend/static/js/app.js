@@ -3674,7 +3674,7 @@ const tourSkipBtn  = document.getElementById('tour-skip');
 
 // Each step targets a selector and optionally requires a tab to be active so
 // the target is visible. Body text is looked up by i18n key so en/de work.
-const TOUR_STEPS = [
+const TOUR_STEPS_FULL = [
   { target: '#user-list, #btn-add-user',           key: 'tour_users' },
   { target: '[data-tab="add-trade"]',              key: 'tour_add_trade',     tab: 'add-trade' },
   { target: '#trade-instrument',                   key: 'tour_instrument',    tab: 'add-trade' },
@@ -3684,7 +3684,33 @@ const TOUR_STEPS = [
   { target: '#shortcuts-fab',                      key: 'tour_help' },
 ];
 
+// Short variant for users who haven't picked a user yet — the main #user-panel
+// (which holds the tabs) is .hidden, so the per-tab steps would have nothing
+// real to spotlight. Point them at the sidebar + help button, and tell them
+// to retake the tour after creating a user.
+const TOUR_STEPS_NO_USER = [
+  { target: '#user-list, #btn-add-user',           key: 'tour_users_first' },
+  { target: '#shortcuts-fab',                      key: 'tour_help_first' },
+];
+
+// `tourSteps` is the active script. Picked at startTour() time so a user who
+// opens the tour without selecting a user gets the short version, and a user
+// who selects someone first gets the full walkthrough.
+let tourSteps = TOUR_STEPS_FULL;
 let tourStepIndex = 0;
+
+function activeTourSteps() {
+  const panel = document.getElementById('user-panel');
+  return panel && panel.classList.contains('hidden') ? TOUR_STEPS_NO_USER : TOUR_STEPS_FULL;
+}
+
+// Hidden elements (display:none / inside a .hidden parent) report width/height
+// of 0, so a 0×0 box means the target isn't really on screen — the spotlight
+// would collapse to (0,0) and the tooltip would land in the corner. Treat
+// those the same as a missing target.
+function isOnScreen(el) {
+  return !!el && (el.offsetWidth > 0 || el.offsetHeight > 0);
+}
 
 function showWelcomeModal()  { welcomeModal.classList.remove('hidden'); }
 function hideWelcomeModal()  {
@@ -3692,11 +3718,10 @@ function hideWelcomeModal()  {
   try { localStorage.setItem(ONBOARD_KEYS.welcome, '1'); } catch {}
 }
 
-// Public: kicks off the tour from anywhere (welcome modal, FAB, etc.). Safe to
-// call when no user exists — steps that require a tab will still switch and
-// the targets just won't exist; we skip past them gracefully.
+// Public: kicks off the tour from anywhere (welcome modal, FAB, etc.).
 function startTour() {
   hideWelcomeModal();
+  tourSteps = activeTourSteps();
   tourStepIndex = 0;
   tourOverlay.classList.remove('hidden');
   gotoTourStep(0);
@@ -3708,16 +3733,16 @@ function endTour() {
 }
 
 function gotoTourStep(i) {
-  if (i < 0 || i >= TOUR_STEPS.length) return endTour();
-  const step = TOUR_STEPS[i];
+  if (i < 0 || i >= tourSteps.length) return endTour();
+  const step = tourSteps[i];
   if (step.tab) switchTab(step.tab);
 
   // Defer one frame so the tab switch above has painted before we measure.
   requestAnimationFrame(() => {
     const target = document.querySelector(step.target);
-    if (!target) {
-      // Target missing (e.g. no active user yet) — center the tooltip without a
-      // spotlight rather than leaving a stale hole on screen.
+    if (!isOnScreen(target)) {
+      // Target missing or hidden — center the tooltip and collapse the
+      // spotlight rather than leaving a stale hole at (0,0).
       tourSpotlight.style.width = tourSpotlight.style.height = '0px';
       positionTooltipCentered();
     } else {
@@ -3726,10 +3751,10 @@ function gotoTourStep(i) {
     }
     tourTitleEl.textContent = i18n.t(`onboarding.${step.key}_title`);
     tourBodyEl.textContent  = i18n.t(`onboarding.${step.key}_body`);
-    tourCounterEl.textContent = `${i + 1} / ${TOUR_STEPS.length}`;
+    tourCounterEl.textContent = `${i + 1} / ${tourSteps.length}`;
     tourBackBtn.disabled = i === 0;
     tourNextBtn.textContent = i18n.t(
-      i === TOUR_STEPS.length - 1 ? 'onboarding.done' : 'onboarding.next'
+      i === tourSteps.length - 1 ? 'onboarding.done' : 'onboarding.next'
     );
     tourStepIndex = i;
   });

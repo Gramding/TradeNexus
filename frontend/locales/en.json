@@ -511,6 +511,10 @@
     "tour_analytics_title": "Analytics",
     "tour_analytics_body": "Volume, realized P&L, dividend / interest income, fees, monthly breakdowns, and a cumulative growth chart with a fiscal-year window.",
     "tour_help_title": "That's it",
-    "tour_help_body": "Click this button (or press ?) any time for keyboard shortcuts. Click the compass next to it to retake this tour."
+    "tour_help_body": "Click this button (or press ?) any time for keyboard shortcuts. Click the compass next to it to retake this tour.",
+    "tour_users_first_title": "Start with a user",
+    "tour_users_first_body": "Each user has their own portfolio. Click the + above to add one — once a user is selected, the Trades / Positions / Cash / Analytics tabs appear and you can retake the tour for the full walkthrough.",
+    "tour_help_first_title": "You're set",
+    "tour_help_first_body": "Add a user, then click the compass any time to retake the tour. The ? button next to it lists the keyboard shortcuts."
   }
 }
