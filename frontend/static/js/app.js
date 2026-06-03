@@ -371,6 +371,7 @@ function renderUserList(users) {
     li.className = 'empty-msg';
     li.textContent = i18n.t('app.no_users');
     userList.appendChild(li);
+    onUsersRendered(users);
     return;
   }
   users.forEach(u => {
@@ -389,6 +390,7 @@ function renderUserList(users) {
     li.addEventListener('click', e => selectUser(u, e.currentTarget));
     userList.appendChild(li);
   });
+  onUsersRendered(users);
 }
 
 function selectUser(u, li) {
@@ -2228,10 +2230,13 @@ function renderPositionsRows(positions) {
   positionsTbody.innerHTML = '';
 
   if (!positions.length) {
-    // Distinguish "no holdings at all" from "filters hid everything".
-    positionsEmpty.textContent = currentPositions.length
-      ? i18n.t('positions.no_match')
-      : i18n.t('positions.no_positions');
+    // Distinguish "no holdings at all" from "filters hid everything"; only the
+    // first case warrants the "open a position" CTA.
+    const filterHid = currentPositions.length > 0;
+    document.getElementById('positions-empty-text').textContent = i18n.t(
+      filterHid ? 'positions.no_match' : 'positions.no_positions'
+    );
+    document.getElementById('btn-positions-empty-add').classList.toggle('hidden', filterHid);
     positionsEmpty.classList.remove('hidden');
     return;
   }
@@ -3648,6 +3653,181 @@ document.getElementById('shortcuts-close').addEventListener('click', () => toggl
 shortcutsCheatsheet.addEventListener('click', (e) => {
   if (e.target === shortcutsCheatsheet) toggleCheatsheet(false);  // backdrop click
 });
+
+// ── Onboarding: welcome modal + interactive tour ──────────────────────────────
+// Self-contained: builds a step-through tour with a spotlight cutout and a
+// floating tooltip card. The welcome modal autoshows on first launch when the
+// users list is empty; both are dismissible and remember their dismissed state
+// in localStorage so a returning user isn't pestered.
+
+const ONBOARD_KEYS = { welcome: 'tn-onboarding-welcomed', tour: 'tn-onboarding-tour-done' };
+const welcomeModal = document.getElementById('welcome-modal');
+const tourOverlay  = document.getElementById('tour-overlay');
+const tourSpotlight = document.getElementById('tour-spotlight');
+const tourTooltip  = document.getElementById('tour-tooltip');
+const tourTitleEl  = document.getElementById('tour-title');
+const tourBodyEl   = document.getElementById('tour-body');
+const tourCounterEl = document.getElementById('tour-step-counter');
+const tourBackBtn  = document.getElementById('tour-back');
+const tourNextBtn  = document.getElementById('tour-next');
+const tourSkipBtn  = document.getElementById('tour-skip');
+
+// Each step targets a selector and optionally requires a tab to be active so
+// the target is visible. Body text is looked up by i18n key so en/de work.
+const TOUR_STEPS = [
+  { target: '#user-list, #btn-add-user',           key: 'tour_users' },
+  { target: '[data-tab="add-trade"]',              key: 'tour_add_trade',     tab: 'add-trade' },
+  { target: '#trade-instrument',                   key: 'tour_instrument',    tab: 'add-trade' },
+  { target: '[data-tab="positions"]',              key: 'tour_positions',     tab: 'positions' },
+  { target: '[data-tab="cash"]',                   key: 'tour_cash',          tab: 'cash' },
+  { target: '[data-tab="analytics"]',              key: 'tour_analytics',     tab: 'analytics' },
+  { target: '#shortcuts-fab',                      key: 'tour_help' },
+];
+
+let tourStepIndex = 0;
+
+function showWelcomeModal()  { welcomeModal.classList.remove('hidden'); }
+function hideWelcomeModal()  {
+  welcomeModal.classList.add('hidden');
+  try { localStorage.setItem(ONBOARD_KEYS.welcome, '1'); } catch {}
+}
+
+// Public: kicks off the tour from anywhere (welcome modal, FAB, etc.). Safe to
+// call when no user exists — steps that require a tab will still switch and
+// the targets just won't exist; we skip past them gracefully.
+function startTour() {
+  hideWelcomeModal();
+  tourStepIndex = 0;
+  tourOverlay.classList.remove('hidden');
+  gotoTourStep(0);
+}
+
+function endTour() {
+  tourOverlay.classList.add('hidden');
+  try { localStorage.setItem(ONBOARD_KEYS.tour, '1'); } catch {}
+}
+
+function gotoTourStep(i) {
+  if (i < 0 || i >= TOUR_STEPS.length) return endTour();
+  const step = TOUR_STEPS[i];
+  if (step.tab) switchTab(step.tab);
+
+  // Defer one frame so the tab switch above has painted before we measure.
+  requestAnimationFrame(() => {
+    const target = document.querySelector(step.target);
+    if (!target) {
+      // Target missing (e.g. no active user yet) — center the tooltip without a
+      // spotlight rather than leaving a stale hole on screen.
+      tourSpotlight.style.width = tourSpotlight.style.height = '0px';
+      positionTooltipCentered();
+    } else {
+      positionSpotlightOn(target);
+      positionTooltipFor(target);
+    }
+    tourTitleEl.textContent = i18n.t(`onboarding.${step.key}_title`);
+    tourBodyEl.textContent  = i18n.t(`onboarding.${step.key}_body`);
+    tourCounterEl.textContent = `${i + 1} / ${TOUR_STEPS.length}`;
+    tourBackBtn.disabled = i === 0;
+    tourNextBtn.textContent = i18n.t(
+      i === TOUR_STEPS.length - 1 ? 'onboarding.done' : 'onboarding.next'
+    );
+    tourStepIndex = i;
+  });
+}
+
+function positionSpotlightOn(el) {
+  const r = el.getBoundingClientRect();
+  const pad = 6;
+  tourSpotlight.style.top    = `${r.top - pad}px`;
+  tourSpotlight.style.left   = `${r.left - pad}px`;
+  tourSpotlight.style.width  = `${r.width + pad * 2}px`;
+  tourSpotlight.style.height = `${r.height + pad * 2}px`;
+}
+
+// Place the tooltip below the target when there's room, else above, else right.
+// Clamps to the viewport so a target near an edge doesn't push the card offscreen.
+function positionTooltipFor(el) {
+  const r = el.getBoundingClientRect();
+  const tip = tourTooltip;
+  // Measure with a temporary off-screen render so width/height are known.
+  tip.style.left = '-9999px'; tip.style.top = '0px';
+  tip.classList.remove('hidden');
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  const gap = 12;
+  const vw = window.innerWidth, vh = window.innerHeight;
+
+  let top, left;
+  if (r.bottom + gap + th <= vh)       { top = r.bottom + gap;            left = r.left; }
+  else if (r.top - gap - th >= 0)      { top = r.top - gap - th;          left = r.left; }
+  else                                  { top = Math.max(8, r.top);       left = r.right + gap; }
+  left = Math.max(8, Math.min(left, vw - tw - 8));
+  top  = Math.max(8, Math.min(top,  vh - th - 8));
+  tip.style.top  = `${top}px`;
+  tip.style.left = `${left}px`;
+}
+
+function positionTooltipCentered() {
+  tourTooltip.classList.remove('hidden');
+  tourTooltip.style.top  = `${Math.max(8, window.innerHeight / 2 - tourTooltip.offsetHeight / 2)}px`;
+  tourTooltip.style.left = `${Math.max(8, window.innerWidth  / 2 - tourTooltip.offsetWidth  / 2)}px`;
+}
+
+// Wiring
+tourNextBtn.addEventListener('click', () => gotoTourStep(tourStepIndex + 1));
+tourBackBtn.addEventListener('click', () => gotoTourStep(tourStepIndex - 1));
+tourSkipBtn.addEventListener('click', endTour);
+document.getElementById('welcome-close').addEventListener('click', hideWelcomeModal);
+document.getElementById('btn-welcome-tour').addEventListener('click', startTour);
+document.getElementById('btn-welcome-add-user').addEventListener('click', () => {
+  hideWelcomeModal();
+  // Reveal and focus the inline add-user form already in the sidebar.
+  document.getElementById('btn-add-user').click();
+  setTimeout(() => document.getElementById('new-user-name')?.focus(), 50);
+});
+document.getElementById('tour-fab').addEventListener('click', startTour);
+
+// Esc closes welcome / tour without dismissing them permanently (so reopening
+// from the FAB still shows the same content). Setting the localStorage flag
+// only happens through the close button / completing the tour.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (!tourOverlay.classList.contains('hidden'))   { endTour(); return; }
+  if (!welcomeModal.classList.contains('hidden'))  { hideWelcomeModal(); }
+});
+
+// Reposition spotlight + tooltip on resize so a window-snap doesn't strand them.
+window.addEventListener('resize', () => {
+  if (tourOverlay.classList.contains('hidden')) return;
+  gotoTourStep(tourStepIndex);
+});
+
+// Empty-state CTAs: jump to Add Trade when the user clicks "Add your first trade".
+document.getElementById('btn-trades-empty-add').addEventListener('click', () => switchTab('add-trade'));
+document.getElementById('btn-positions-empty-add').addEventListener('click', () => switchTab('add-trade'));
+document.getElementById('empty-state-cta').addEventListener('click', () => {
+  document.getElementById('btn-add-user').click();
+  setTimeout(() => document.getElementById('new-user-name')?.focus(), 50);
+});
+
+// Called by renderUserList() once it has rendered the sidebar. Retunes the main
+// empty state to a "Add your first user" CTA when the list is empty, and shows
+// the welcome modal on first launch (suppressed by the localStorage flag).
+function onUsersRendered(users) {
+  const emptyText = document.getElementById('empty-state-text');
+  const emptyCta  = document.getElementById('empty-state-cta');
+  if (!users.length) {
+    emptyText.textContent = i18n.t('onboarding.no_users');
+    emptyCta.textContent  = i18n.t('onboarding.btn_add_user');
+    emptyCta.classList.remove('hidden');
+    try {
+      if (!localStorage.getItem(ONBOARD_KEYS.welcome)) showWelcomeModal();
+    } catch { showWelcomeModal(); }
+  } else {
+    emptyText.textContent = i18n.t('app.select_user');
+    emptyCta.classList.add('hidden');
+  }
+}
+
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 // Load settings first so formatters are configured before anything renders.

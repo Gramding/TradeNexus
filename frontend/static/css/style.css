@@ -1966,3 +1966,126 @@ button.icon-btn.danger  .icon { display: block; }
   padding-top: 18px;
   border-top: 1px solid var(--border);
 }
+
+/* ── Onboarding: welcome modal, tour overlay, empty-state CTAs ─────────────── */
+
+/* "Take the tour" FAB — twin of #shortcuts-fab, just to its left. */
+#tour-fab {
+  position: fixed;
+  bottom: 18px;
+  right: 60px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--surface2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  z-index: 1000;
+}
+#tour-fab:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+#tour-fab .icon { width: 18px; height: 18px; }
+
+/* Welcome modal: same backdrop + panel pattern as the shortcuts cheatsheet. */
+#welcome-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+}
+#welcome-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: 460px;
+  max-width: calc(100vw - 32px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.welcome-body { padding: 18px 22px; }
+.welcome-lede { font-size: 14px; color: var(--text); margin: 0 0 14px; line-height: 1.5; }
+.welcome-points {
+  margin: 0 0 14px;
+  padding: 0 0 0 18px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.55;
+}
+.welcome-points li + li { margin-top: 6px; }
+.welcome-cta-hint { font-size: 12px; color: var(--text-muted); margin: 0; }
+.welcome-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* Tour overlay: a small absolutely-positioned spotlight whose enormous
+   box-shadow darkens the rest of the screen, plus a floating tooltip card.
+   Engine sets `top/left/width/height` on the spotlight per step. */
+#tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  pointer-events: none;        /* spotlight gap is just visual; tooltip handles clicks */
+}
+#tour-spotlight {
+  position: absolute;
+  top: 0; left: 0;
+  width: 0; height: 0;
+  border-radius: 6px;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.55);
+  transition: top 220ms ease, left 220ms ease, width 220ms ease, height 220ms ease;
+  pointer-events: none;
+}
+#tour-tooltip {
+  position: absolute;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  pointer-events: auto;
+  transition: top 220ms ease, left 220ms ease;
+}
+#tour-title  { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+#tour-body   { font-size: 13px; color: var(--text); line-height: 1.5; }
+#tour-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+#tour-step-counter { font-size: 11px; color: var(--text-muted); }
+.tour-actions { display: flex; gap: 6px; align-items: center; }
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.link-btn:hover { color: var(--text); }
+
+/* Empty-state CTAs (Trades, Positions, the main "no users yet" panel). The
+   existing .placeholder is centered text; this turns it into a small column
+   with a button underneath. */
+#trades-empty.placeholder,
+#positions-empty.placeholder,
+#empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+#empty-state-cta { padding: 6px 14px; }

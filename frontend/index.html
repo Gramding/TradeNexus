@@ -53,7 +53,8 @@
     <!-- Main panel -->
     <main id="main">
       <div id="empty-state">
-        <p data-i18n="app.select_user">Select a user to view their trades.</p>
+        <p id="empty-state-text" data-i18n="app.select_user">Select a user to view their trades.</p>
+        <button type="button" id="empty-state-cta" class="hidden"></button>
       </div>
 
       <div id="user-panel" class="hidden">
@@ -137,7 +138,10 @@
               </thead>
               <tbody id="trades-tbody"></tbody>
             </table>
-            <p id="trades-empty" class="placeholder hidden" data-i18n="trades.empty">No trades found.</p>
+            <div id="trades-empty" class="placeholder hidden">
+              <p data-i18n="trades.empty">No trades yet.</p>
+              <button type="button" id="btn-trades-empty-add" class="secondary" data-i18n="trades.empty_cta">Add your first trade →</button>
+            </div>
           </div>
 
           <div id="trades-loadmore" class="list-loadmore hidden"></div>
@@ -337,7 +341,10 @@
                 </thead>
                 <tbody id="positions-tbody"></tbody>
               </table>
-              <p id="positions-empty" class="placeholder hidden">No open positions.</p>
+              <div id="positions-empty" class="placeholder hidden">
+                <p id="positions-empty-text" data-i18n="positions.no_positions">No open positions.</p>
+                <button type="button" id="btn-positions-empty-add" class="secondary" data-i18n="positions.empty_cta">Open a position →</button>
+              </div>
             </div>
           </div>
         </div>
@@ -992,6 +999,51 @@
 
   <!-- Floating help button (discoverable shortcuts) -->
   <button id="shortcuts-fab" data-i18n-title="shortcuts.fab_title" title="Keyboard shortcuts (?)">?</button>
+
+  <!-- Floating "take a tour" button -->
+  <button id="tour-fab" data-i18n-title="onboarding.tour_fab_title" title="Take the tour"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
+
+  <!-- Welcome modal: shown once on first launch (no users yet). Dismissible. -->
+  <div id="welcome-modal" class="hidden">
+    <div id="welcome-panel">
+      <div class="settings-header">
+        <span class="settings-title" data-i18n="onboarding.welcome_title">Welcome to TradeNexus</span>
+        <button class="modal-close-btn" id="welcome-close" data-i18n-title="common.close" title="Close" aria-label="Close"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+      </div>
+      <div class="welcome-body">
+        <p class="welcome-lede" data-i18n="onboarding.welcome_lede">A local-only tracker for your trades, positions, and portfolio analytics. Nothing leaves your machine.</p>
+        <ul class="welcome-points">
+          <li data-i18n="onboarding.point_assets">Stocks, ETFs, options, bonds, crypto, forex, and futures — long or short, in any currency.</li>
+          <li data-i18n="onboarding.point_events">Record dividends, splits, interest, and fees. Splits adjust your open lots automatically.</li>
+          <li data-i18n="onboarding.point_offline">Lives in a single SQLite file under your home directory. Auto-backed-up on every launch.</li>
+        </ul>
+        <p class="welcome-cta-hint" data-i18n="onboarding.welcome_cta_hint">Start by adding a user, then click "Take the tour" any time for a 30-second walk-through.</p>
+      </div>
+      <div class="welcome-footer">
+        <button type="button" id="btn-welcome-add-user" data-i18n="onboarding.btn_add_user">Add a user</button>
+        <button type="button" id="btn-welcome-tour" class="secondary" data-i18n="onboarding.btn_take_tour">Take the tour</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tour overlay: a single dark backdrop + a small spotlight element whose
+       huge box-shadow darkens everything around it. The tooltip floats near
+       the spotlight; the engine repositions both per step. -->
+  <div id="tour-overlay" class="hidden">
+    <div id="tour-spotlight"></div>
+    <div id="tour-tooltip" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+      <div id="tour-title"></div>
+      <div id="tour-body"></div>
+      <div id="tour-footer">
+        <span id="tour-step-counter"></span>
+        <span class="tour-actions">
+          <button type="button" id="tour-skip" class="link-btn" data-i18n="onboarding.skip">Skip</button>
+          <button type="button" id="tour-back" class="secondary" data-i18n="onboarding.back">Back</button>
+          <button type="button" id="tour-next" data-i18n="onboarding.next">Next</button>
+        </span>
+      </div>
+    </div>
+  </div>
 
   <div id="toast" class="hidden"></div>
 

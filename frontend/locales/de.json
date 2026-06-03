@@ -40,7 +40,7 @@
     "all_loaded": "Alle {n} Handelsgeschäfte geladen",
     "showing": "{shown} von {total} Handelsgeschäften werden angezeigt",
     "no_trades": "Noch keine Handelsgeschäfte vorhanden. Fügen Sie oben Ihren ersten Handel hinzu.",
-    "empty": "Keine Handelsgeschäfte gefunden.",
+    "empty": "Noch keine Trades.",
     "filter_ticker": "Ticker…",
     "all_types": "Alle Typen",
     "all_actions": "Alle Aktionen",
@@ -86,7 +86,8 @@
     "ticker_required": "Ticker ist erforderlich.",
     "quantity_positive": "Menge muss größer als 0 sein.",
     "price_nonneg": "Preis muss ≥ 0 sein.",
-    "date_required": "Handelsdatum ist erforderlich."
+    "date_required": "Handelsdatum ist erforderlich.",
+    "empty_cta": "Ersten Trade hinzufügen →"
   },
   "trade_form": {
     "instrument": "Instrument",
@@ -165,7 +166,8 @@
     "refresh_failed": "Preisaktualisierung fehlgeschlagen: {error}",
     "reload_failed": "Positionen konnten nicht neu geladen werden: {error}",
     "cover": "Eindecken",
-    "short": "SHORT"
+    "short": "SHORT",
+    "empty_cta": "Position eröffnen →"
   },
   "sell_form": {
     "title": "{ticker} verkaufen",
@@ -480,5 +482,35 @@
     "empty": "Noch keine Ereignisse erfasst.",
     "save_failed": "Ereignis konnte nicht gespeichert werden: {error}",
     "col_action": "Aktion"
+  },
+  "onboarding": {
+    "welcome_title": "Willkommen bei TradeNexus",
+    "welcome_lede": "Ein lokaler Tracker für Trades, Positionen und Portfolio-Analytics. Nichts verlässt deinen Rechner.",
+    "point_assets": "Aktien, ETFs, Optionen, Anleihen, Krypto, Forex und Futures — long oder short, in beliebiger Währung.",
+    "point_events": "Dividenden, Splits, Zinsen und Gebühren erfassen. Splits passen offene Lots automatisch an.",
+    "point_offline": "Liegt in einer einzigen SQLite-Datei in deinem Home-Verzeichnis. Beim Start automatisch gesichert.",
+    "welcome_cta_hint": "Lege zuerst einen Nutzer an, dann klicke jederzeit auf \"Tour starten\" für eine 30-Sekunden-Einführung.",
+    "btn_add_user": "Nutzer anlegen",
+    "btn_take_tour": "Tour starten",
+    "no_users": "Noch keine Nutzer. Lege einen an, um zu starten.",
+    "tour_fab_title": "Tour starten",
+    "skip": "Überspringen",
+    "back": "Zurück",
+    "next": "Weiter",
+    "done": "Fertig",
+    "tour_users_title": "Deine Nutzer",
+    "tour_users_body": "Jeder Nutzer hat ein eigenes Portfolio: Trades, Positionen, Cash und Analytics. Klicke das + oben in der Seitenleiste, um einen anzulegen.",
+    "tour_add_trade_title": "Trade hinzufügen",
+    "tour_add_trade_body": "Öffne diesen Tab, um einen Trade zu erfassen. \"Kaufen (Long)\" eröffnet eine Long-Position, \"Leerverkauf\" eine Short.",
+    "tour_instrument_title": "Instrument finden",
+    "tour_instrument_body": "Tippe Name oder Ticker — Auswahl aus der Liste verknüpft den Trade mit einem Yahoo-Symbol, damit Preise automatisch aktualisiert werden. Freier Text funktioniert auch.",
+    "tour_positions_title": "Live-Positionen",
+    "tour_positions_body": "Offene Lots gruppiert nach Ticker (und nach Strike + Verfall bei Optionen, Richtung bei Shorts). Klicke „Preise aktualisieren“ für Live-Quotes.",
+    "tour_cash_title": "Cash und Ereignisse",
+    "tour_cash_body": "Aktueller Saldo, Ein- und Auszahlungen. Der Bereich Ereignisse erfasst Dividenden, Splits, Zinsen und Gebühren — Splits passen offene Lots automatisch an.",
+    "tour_analytics_title": "Analytics",
+    "tour_analytics_body": "Volumen, realisierte P&L, Dividenden/Zinsen, Gebühren, Monatsverteilungen und ein kumulatives Wachstumsdiagramm mit Geschäftsjahres-Fenster.",
+    "tour_help_title": "Das war's",
+    "tour_help_body": "Klicke diesen Button (oder drücke ?) für die Tastenkürzel. Der Kompass daneben startet diese Tour erneut."
   }
 }
