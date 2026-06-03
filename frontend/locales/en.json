@@ -40,7 +40,7 @@
     "all_loaded": "All {n} trades loaded",
     "showing": "Showing {shown} of {total} trades",
     "no_trades": "No trades yet. Add your first trade above.",
-    "empty": "No trades found.",
+    "empty": "No trades yet.",
     "filter_ticker": "Ticker…",
     "all_types": "All types",
     "all_actions": "All actions",
@@ -86,7 +86,8 @@
     "ticker_required": "Ticker is required.",
     "quantity_positive": "Quantity must be greater than 0.",
     "price_nonneg": "Price must be ≥ 0.",
-    "date_required": "Trade date is required."
+    "date_required": "Trade date is required.",
+    "empty_cta": "Add your first trade →"
   },
   "trade_form": {
     "instrument": "Instrument",
@@ -165,7 +166,8 @@
     "refresh_failed": "Price refresh failed: {error}",
     "reload_failed": "Failed to reload positions: {error}",
     "cover": "Cover",
-    "short": "SHORT"
+    "short": "SHORT",
+    "empty_cta": "Open a position →"
   },
   "sell_form": {
     "title": "Sell {ticker}",
@@ -480,5 +482,35 @@
     "empty": "No events recorded yet.",
     "save_failed": "Could not save event: {error}",
     "col_action": "Action"
+  },
+  "onboarding": {
+    "welcome_title": "Welcome to TradeNexus",
+    "welcome_lede": "A local-only tracker for your trades, positions, and portfolio analytics. Nothing leaves your machine.",
+    "point_assets": "Stocks, ETFs, options, bonds, crypto, forex, and futures — long or short, in any currency.",
+    "point_events": "Record dividends, splits, interest, and fees. Splits adjust your open lots automatically.",
+    "point_offline": "Lives in a single SQLite file under your home directory. Auto-backed-up on every launch.",
+    "welcome_cta_hint": "Start by adding a user, then click \"Take the tour\" any time for a 30-second walk-through.",
+    "btn_add_user": "Add a user",
+    "btn_take_tour": "Take the tour",
+    "no_users": "No users yet. Add one to get started.",
+    "tour_fab_title": "Take the tour",
+    "skip": "Skip",
+    "back": "Back",
+    "next": "Next",
+    "done": "Done",
+    "tour_users_title": "Your users",
+    "tour_users_body": "Each user has their own portfolio: trades, positions, cash, and analytics. Click the + at the top of the sidebar to add one.",
+    "tour_add_trade_title": "Add a trade",
+    "tour_add_trade_body": "Open this tab to record a trade. Pick Buy (long) to open a long position, or Sell short to open a short.",
+    "tour_instrument_title": "Find your instrument",
+    "tour_instrument_body": "Type a name or ticker — selecting from the list links the trade to a Yahoo symbol so prices auto-update. Free text also works for unlisted instruments.",
+    "tour_positions_title": "Live positions",
+    "tour_positions_body": "Open lots grouped by ticker (and by strike + expiration for options, direction for shorts). Hit \"Refresh prices\" to fetch live quotes.",
+    "tour_cash_title": "Cash and events",
+    "tour_cash_body": "Your running balance, deposits, and withdrawals. The Events panel records dividends, splits, interest, and fees — splits automatically adjust your open lots.",
+    "tour_analytics_title": "Analytics",
+    "tour_analytics_body": "Volume, realized P&L, dividend / interest income, fees, monthly breakdowns, and a cumulative growth chart with a fiscal-year window.",
+    "tour_help_title": "That's it",
+    "tour_help_body": "Click this button (or press ?) any time for keyboard shortcuts. Click the compass next to it to retake this tour."
   }
 }
