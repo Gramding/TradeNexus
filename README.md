@@ -1,5 +1,5 @@
 # TradeNexus
-
+> Vibe Code Warning!
 A desktop application for tracking trades, positions, realized / unrealized P&L, cash flow, and portfolio analytics across **stocks, ETFs, options, bonds, crypto, forex, and futures** — long *and* short, in any currency. TradeNexus runs entirely on your machine: a local FastAPI backend with a SQLite database, a vanilla-JS frontend, and an Electron shell that bundles them into a single installable app.
 
 > All data lives in a local SQLite file (`~/TradeTracker/trades.db`). There is no cloud account, no telemetry, and no external database. The only network calls are to Yahoo Finance — for price quotes, instrument search, and FX rates.
