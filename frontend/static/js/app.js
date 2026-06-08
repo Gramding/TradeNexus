@@ -1656,26 +1656,54 @@ posSplitBroker.addEventListener('change', () => {
   applyPositionSort();
 });
 
-// ── Add cash (deposit) ──────────────────────────────────────────────────────────
-const btnAddCash    = document.getElementById('btn-add-cash');
-const addCashForm   = document.getElementById('add-cash-form');
-const addCashAmount = document.getElementById('add-cash-amount');
-const addCashNote   = document.getElementById('add-cash-note');
+// ── Add cash (deposit) / withdraw ─────────────────────────────────────────────
+const btnAddCash      = document.getElementById('btn-add-cash');
+const btnWithdrawCash = document.getElementById('btn-withdraw-cash');
+const addCashForm     = document.getElementById('add-cash-form');
+const addCashAmount   = document.getElementById('add-cash-amount');
+const addCashNote     = document.getElementById('add-cash-note');
+const withdrawForm    = document.getElementById('withdraw-cash-form');
+const withdrawAmount  = document.getElementById('withdraw-cash-amount');
+const withdrawNote    = document.getElementById('withdraw-cash-note');
+
+// Only one of the two forms is open at a time; both buttons hide while either is.
+function showCashButtons() {
+  btnAddCash.classList.remove('hidden');
+  btnWithdrawCash.classList.remove('hidden');
+}
 
 function closeAddCashForm() {
   addCashForm.classList.add('hidden');
-  btnAddCash.classList.remove('hidden');
+  showCashButtons();
+}
+
+function closeWithdrawForm() {
+  withdrawForm.classList.add('hidden');
+  showCashButtons();
 }
 
 btnAddCash.addEventListener('click', () => {
+  closeWithdrawForm();
   addCashForm.classList.remove('hidden');
   btnAddCash.classList.add('hidden');
+  btnWithdrawCash.classList.add('hidden');
   addCashAmount.value = '';
   addCashNote.value = '';
   addCashAmount.focus();
 });
 
+btnWithdrawCash.addEventListener('click', () => {
+  closeAddCashForm();
+  withdrawForm.classList.remove('hidden');
+  btnAddCash.classList.add('hidden');
+  btnWithdrawCash.classList.add('hidden');
+  withdrawAmount.value = '';
+  withdrawNote.value = '';
+  withdrawAmount.focus();
+});
+
 document.getElementById('btn-cancel-cash').addEventListener('click', closeAddCashForm);
+document.getElementById('btn-cancel-withdraw').addEventListener('click', closeWithdrawForm);
 
 addCashForm.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -1696,6 +1724,30 @@ addCashForm.addEventListener('submit', async (e) => {
     loadCash();   // refresh the history so the new deposit appears
   } catch (err) {
     showToast(err.message, true);
+  } finally {
+    saveBtn.disabled = false;
+  }
+});
+
+withdrawForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!activeUserId) return;
+  const amount = parseFloat(withdrawAmount.value);
+  if (!(amount > 0)) { showToast(i18n.t('cash.amount_invalid'), true); return; }
+
+  const saveBtn = document.getElementById('btn-save-withdraw');
+  saveBtn.disabled = true;
+  try {
+    const res = await apiFetch(`/users/${activeUserId}/cash/withdraw`, {
+      method: 'POST',
+      body: JSON.stringify({ amount, note: withdrawNote.value.trim() || null }),
+    });
+    setCashBalance(res.balance);
+    showToast(i18n.t('cash.withdrawn', { amount: formatCurrency(amount) }));
+    closeWithdrawForm();
+    loadCash();   // refresh the history so the new withdrawal appears
+  } catch (err) {
+    showToast(err.message, true);  // surfaces the 400 "exceeds balance" message
   } finally {
     saveBtn.disabled = false;
   }
