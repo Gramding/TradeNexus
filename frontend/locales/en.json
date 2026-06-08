@@ -237,6 +237,7 @@
     "showing": "Showing {shown} of {total} transactions",
     "cap_notice": "Showing 500 transactions. Older transactions are hidden to keep the page responsive.",
     "added": "Added {amount} to cash.",
+    "withdrawn": "Withdrew {amount} from cash.",
     "amount_invalid": "Enter an amount greater than 0.",
     "withdraw_error": "Withdrawal exceeds available balance",
     "columns": {

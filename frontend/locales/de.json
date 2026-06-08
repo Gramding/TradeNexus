@@ -237,6 +237,7 @@
     "showing": "{shown} von {total} Transaktionen werden angezeigt",
     "cap_notice": "Es werden 500 Transaktionen angezeigt. Ältere Transaktionen werden ausgeblendet, um die Seite reaktionsfähig zu halten.",
     "added": "{amount} zu den Barmitteln hinzugefügt.",
+    "withdrawn": "{amount} von den Barmitteln abgehoben.",
     "amount_invalid": "Geben Sie einen Betrag größer als 0 ein.",
     "withdraw_error": "Auszahlung übersteigt das verfügbare Guthaben",
     "columns": {
