@@ -34,6 +34,22 @@ def test_same_currency_trade_has_fx_1(client, user_id):
     assert t["fx_rate"] == 1.0
 
 
+def test_trade_currency_inherits_instrument_currency(client, user_id):
+    # A trade with no explicit trade_currency inherits the linked instrument's
+    # currency (e.g. a EUR-denominated German instrument logs cost basis in EUR),
+    # so price and cost basis share one currency without any conversion.
+    inst = client.post("/instruments", json={
+        "symbol": "DE000BASF111", "ticker": "BAS", "name": "BASF",
+        "asset_class": "stock", "currency": "EUR",
+    }).json()
+    t = client.post(f"/users/{user_id}/trades", json={
+        "ticker": "BAS", "trade_type": "Stock", "action": "buy",
+        "quantity": 10, "price_per_unit": 50, "trade_date": "2026-05-01",
+        "instrument_id": inst["id"],  # no trade_currency sent
+    }).json()
+    assert t["trade_currency"] == "EUR"
+
+
 def test_foreign_buy_converts_cash_to_base(client, user_id):
     # Base USD; buy 10 @ 100 EUR with fx 1.10 -> cash debit 1100 USD.
     t = client.post(f"/users/{user_id}/trades", json={

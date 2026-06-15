@@ -19,6 +19,7 @@ SEED_SETTINGS = [
     ("date_format_manual_override", "0"),
     ("decimal_separator", "."),
     ("price_refresh_interval_minutes", "15"),
+    ("price_source", "yahoo_finance"),
     ("default_broker_id", ""),
     ("fiscal_year_start_month", "1"),
 ]

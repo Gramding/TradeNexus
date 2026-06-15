@@ -15,6 +15,7 @@ const appSettings = {
   date_format_manual_override: '0',
   decimal_separator: '.',
   price_refresh_interval_minutes: '15',
+  price_source: 'yahoo_finance',
   default_broker_id: '',
   fiscal_year_start_month: '1',
 };
@@ -98,4 +99,33 @@ function formatDate(isoString, formatOverride) {
     case 'MM/DD/YYYY':
     default:           return `${mo}/${d}/${y}`;
   }
+}
+
+// formatDateTime('2026-06-08 14:32:07') → "06/08/2026, 14:32:07": the date in the
+// user's date_format plus 24-hour time to the second. The date part still routes
+// through formatDate, so the day-format setting is honored.
+//   - utc:false (default) — the value is a naive local timestamp (user-entered
+//     trade/event datetimes from a datetime-local input); shown verbatim.
+//   - utc:true — the value is a UTC server timestamp (e.g. created_at); converted
+//     to the viewer's local time before formatting.
+// A date-only value (legacy rows with no time) falls back to formatDate — there is
+// no time to show — so this is always safe to call on mixed old/new data.
+function formatDateTime(value, { utc = false } = {}) {
+  if (!value) return '';
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return formatDate(s);   // date-only → no time
+  const m = s.replace(' ', 'T').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return formatDate(s);   // unrecognized shape — best-effort date only
+  let y, mo, d, hh, mi, ss;
+  if (utc) {
+    const dt = new Date(`${s.replace(' ', 'T')}Z`);
+    if (isNaN(dt.getTime())) return formatDate(s);
+    const p = (n) => String(n).padStart(2, '0');
+    [y, mo, d] = [dt.getFullYear(), p(dt.getMonth() + 1), p(dt.getDate())];
+    [hh, mi, ss] = [p(dt.getHours()), p(dt.getMinutes()), p(dt.getSeconds())];
+  } else {
+    [, y, mo, d, hh, mi, ss] = m;
+    ss = ss || '00';
+  }
+  return `${formatDate(`${y}-${mo}-${d}`)}, ${hh}:${mi}:${ss}`;
 }

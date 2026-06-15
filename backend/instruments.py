@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from db import get_connection
-from price_service import search_instruments
+from price_service import search_instruments, resolve_isin, ISIN_RE
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["instruments"])
@@ -89,6 +89,18 @@ def search_instrument(q: str = Query(...)):
     # Local hit → return immediately, no live call needed.
     if local:
         return {"results": local, "source": "local"}
+
+    # An ISIN query (e.g. "DE000BASF111") resolves via onvista — this is how the
+    # user logs a German instrument by its ISIN in the Add-trade search.
+    if ISIN_RE.match(term.upper()):
+        try:
+            inst = resolve_isin(term)
+        except Exception as exc:
+            logger.warning("Onvista ISIN resolve failed for %r: %s", term, exc)
+            inst = None
+        if inst:
+            return {"results": [inst], "source": "onvista"}
+        return {"results": [], "source": "onvista", "warning": "ISIN not found"}
 
     # Nothing local → ask Yahoo. On any failure, fall back to the (empty) local
     # results with a warning rather than erroring the whole request.

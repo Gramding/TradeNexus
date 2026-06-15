@@ -3,3 +3,4 @@ uvicorn[standard]==0.34.3
 python-multipart==0.0.20
 requests>=2.31.0
 yfinance>=0.2.0
+aiohttp>=3.9

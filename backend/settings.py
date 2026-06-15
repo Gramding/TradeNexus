@@ -32,6 +32,7 @@ ALLOWED_SETTINGS = {
     "default_broker_id",
     "fiscal_year_start_month",
     "date_format_manual_override",
+    "price_source",
 }
 
 
@@ -82,6 +83,15 @@ def _validate_setting(key: str, value) -> str:
         s = str(value or "").strip().upper()
         if len(s) != 3 or not s.isalpha():
             raise HTTPException(status_code=400, detail="base_currency must be a 3-letter ISO code (e.g. USD, EUR).")
+        return s
+
+    if key == "price_source":
+        import price_service
+        s = str(value or "").strip()
+        try:
+            price_service.get_price_source(s)  # raises ValueError for unknown sources
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         return s
 
     # display_name, currency, default_broker_id: free-form strings.

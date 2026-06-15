@@ -5,7 +5,7 @@ import json
 import logging
 import sqlite3
 import time
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -111,6 +111,13 @@ def _validate_iso_date(value, field: str):
         return datetime.date.fromisoformat(value).isoformat()
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail=f"{field} must be an ISO date (YYYY-MM-DD).")
+
+
+def _dt_to_storage(dt: datetime.datetime) -> str:
+    """Serialize a datetime to the DB's 'YYYY-MM-DD HH:MM:SS' text form — the same
+    space-separated, second-precision shape as the created_at columns (which come
+    from SQLite's datetime('now')). Date-only inputs arrive coerced to midnight."""
+    return dt.isoformat(sep=" ", timespec="seconds")
 
 
 # Reusable SELECT that joins broker name + color and the linked instrument; used
@@ -393,7 +400,7 @@ class TradeCreate(BaseModel):
     action: str
     quantity: float
     price_per_unit: float
-    trade_date: datetime.date
+    trade_date: datetime.datetime  # full timestamp; a date-only value coerces to midnight
     notes: Optional[str] = None
     broker_id: Optional[int] = None
     commission: Optional[float] = None  # None = auto-calc from broker
@@ -412,13 +419,18 @@ class TradeCreate(BaseModel):
     accrued_interest: Optional[float] = None  # bonds: accrued paid at purchase, in trade_currency
 
 
+class BulkTradeCreate(TradeCreate):
+    # Same trade fields as TradeCreate, applied to every user in user_ids.
+    user_ids: List[int]
+
+
 class TradeUpdate(BaseModel):
     ticker: Optional[str] = None
     trade_type: Optional[str] = None
     action: Optional[str] = None
     quantity: Optional[float] = None
     price_per_unit: Optional[float] = None
-    trade_date: Optional[datetime.date] = None
+    trade_date: Optional[datetime.datetime] = None  # full timestamp; date-only coerces to midnight
     notes: Optional[str] = None
     broker_id: Optional[int] = None
     commission: Optional[float] = None
@@ -593,8 +605,11 @@ def list_trades(
         where_sql += " AND t.trade_date >= ?"
         filter_params.append(date_from)
     if date_to:
+        # trade_date now carries a time, so an inclusive day filter must cover the
+        # whole day — compare against end-of-day, not bare 'YYYY-MM-DD' (which would
+        # drop any same-day trade with a non-midnight time). Keeps the index usable.
         where_sql += " AND t.trade_date <= ?"
-        filter_params.append(date_to)
+        filter_params.append(f"{date_to} 23:59:59")
 
     # Cache key is the filter set only — independent of sort, cursor, and limit.
     cache_key = (
@@ -655,8 +670,15 @@ def list_trades(
     }
 
 
-@app.post("/users/{user_id}/trades", status_code=201)
-def create_trade(user_id: int, body: TradeCreate):
+def _validate_trade_body(body) -> str:
+    """Validate the user-independent fields of an opening-trade body and return the
+    resolved direction. Shared by create_trade and the bulk endpoint.
+
+    An opening trade's direction is inferred from its action (buy = long,
+    sell = short to open) unless explicitly given, in which case the two must
+    agree. Closing a position is done via the /sell and /cover endpoints, so an
+    opening trade only ever opens a long or a short.
+    """
     if not body.ticker.strip():
         raise HTTPException(status_code=422, detail="Ticker cannot be empty.")
     if body.action not in ACTIONS:
@@ -670,10 +692,6 @@ def create_trade(user_id: int, body: TradeCreate):
     if body.strike_price is not None and body.strike_price < 0:
         raise HTTPException(status_code=422, detail="strike_price must be >= 0.")
 
-    # An opening trade's direction is inferred from its action (buy = long,
-    # sell = short to open) unless explicitly given, in which case the two must
-    # agree. Closing a position is done via the /sell and /cover endpoints, not
-    # here, so create_trade only ever opens a long or a short.
     inferred_direction = "long" if body.action == "buy" else "short"
     direction = (body.direction or inferred_direction)
     if direction not in DIRECTIONS:
@@ -684,91 +702,108 @@ def create_trade(user_id: int, body: TradeCreate):
             detail="direction must be 'long' for a buy and 'short' for a sell. "
                    "Close existing positions with the sell/cover actions.",
         )
+    return direction
+
+
+def _create_trade_row(conn, cur: sqlite3.Cursor, user_id: int, body, direction: str) -> int:
+    """Insert one opening trade plus its cash-pool row for user_id, using an
+    already-open cursor. Does NOT commit or invalidate the stats cache — the caller
+    owns the transaction so a single create and a bulk fan-out share this code path.
+    Assumes body has already passed _validate_trade_body. Returns the new trade id.
+    """
+    _require_user(cur, user_id)
+    trade_type = _normalize_trade_type(cur, body.trade_type)
+    if body.broker_id is not None:
+        _require_broker(cur, body.broker_id)
+    instr_currency = None
+    if body.instrument_id is not None:
+        _require_instrument(cur, body.instrument_id)
+        row = cur.execute("SELECT currency FROM instruments WHERE id = ?", (body.instrument_id,)).fetchone()
+        instr_currency = row[0] if row else None
+
+    # total_value is the full notional: per-unit price × quantity × contract
+    # multiplier (100 for an equity option, face_value/100 for a bond, 1 for
+    # a share). Every downstream value (net_total_value, cash deduction, stats
+    # volume) derives from this.
+    face_value  = _resolve_face_value(trade_type, body.face_value)
+    multiplier  = _resolve_multiplier(trade_type, body.multiplier, face_value)
+    total_value = round(body.quantity * body.price_per_unit * multiplier, 10)
+    expiration  = body.expiration_date.isoformat() if body.expiration_date is not None else None
+    underlying  = body.underlying.strip().upper() if body.underlying else None
+    maturity    = body.maturity_date.isoformat() if body.maturity_date is not None else None
+    accrued     = round(float(body.accrued_interest), 10) if body.accrued_interest else 0.0
+    if accrued < 0:
+        raise HTTPException(status_code=422, detail="accrued_interest must be >= 0.")
+
+    # Native currency: explicit > the instrument's > the base currency. fx_rate
+    # converts the native amounts into base; the cash pool is kept in base.
+    trade_currency = ((body.trade_currency or instr_currency or _base_currency(cur)) or "USD").strip().upper()
+    fx_rate        = _resolve_fx(conn, cur, trade_currency, body.fx_rate)
+
+    commission      = _compute_commission(cur, body.broker_id, body.quantity, body.commission)
+    net_total_value = _net_total(body.action, total_value, commission)
+    # Bonds: the buyer pays accrued interest on top of the clean price; the
+    # seller receives it. Bundled into the cash flow so the broker's debit
+    # matches reality, but kept out of total_value/cost basis so realized P&L
+    # reflects principal gain/loss only.
+    cash_native     = net_total_value + (accrued if body.action == "buy" else -accrued)
+    net_total_base  = round(cash_native * fx_rate, 10)
+
+    cur.execute(
+        "INSERT INTO trades "
+        "(user_id, broker_id, instrument_id, ticker, trade_type, action, quantity, price_per_unit, "
+        "total_value, trade_date, notes, remaining_quantity, commission, net_total_value, "
+        "multiplier, strike_price, expiration_date, underlying, direction, trade_currency, fx_rate, "
+        "face_value, coupon_rate, coupon_frequency, maturity_date, accrued_interest) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            user_id, body.broker_id, body.instrument_id, body.ticker.strip().upper(),
+            trade_type, body.action, body.quantity, body.price_per_unit, total_value,
+            _dt_to_storage(body.trade_date), body.notes, body.quantity,
+            commission, net_total_value,
+            multiplier, body.strike_price, expiration, underlying, direction,
+            trade_currency, fx_rate,
+            face_value, body.coupon_rate, body.coupon_frequency, maturity, accrued,
+        ),
+    )
+    trade_id = cur.lastrowid
+
+    if body.action == "buy":
+        # Long open: deduct the commission-inclusive net (in base currency) so the
+        # cash pool matches what the broker actually debits (gross cost + commission
+        # + bond accrued interest).
+        cur.execute(
+            "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
+            "VALUES (?, 'buy_deduction', ?, ?)",
+            (user_id, -net_total_base, trade_id),
+        )
+    else:
+        # Short open (sell-to-open): credit the proceeds net of commission, as the
+        # broker deposits the sale proceeds into the account. The liability to buy
+        # the shares back is tracked by the open short lot, not the cash pool.
+        cur.execute(
+            "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
+            "VALUES (?, 'sell_proceeds', ?, ?)",
+            (user_id, net_total_base, trade_id),
+        )
+
+    return trade_id
+
+
+@app.post("/users/{user_id}/trades", status_code=201)
+def create_trade(user_id: int, body: TradeCreate):
+    direction = _validate_trade_body(body)
 
     conn = _db()
     try:
         cur = conn.cursor()
-        _require_user(cur, user_id)
-        trade_type = _normalize_trade_type(cur, body.trade_type)
-        if body.broker_id is not None:
-            _require_broker(cur, body.broker_id)
-        instr_currency = None
-        if body.instrument_id is not None:
-            _require_instrument(cur, body.instrument_id)
-            row = cur.execute("SELECT currency FROM instruments WHERE id = ?", (body.instrument_id,)).fetchone()
-            instr_currency = row[0] if row else None
-
-        # total_value is the full notional: per-unit price × quantity × contract
-        # multiplier (100 for an equity option, face_value/100 for a bond, 1 for
-        # a share). Every downstream value (net_total_value, cash deduction, stats
-        # volume) derives from this.
-        face_value  = _resolve_face_value(trade_type, body.face_value)
-        multiplier  = _resolve_multiplier(trade_type, body.multiplier, face_value)
-        total_value = round(body.quantity * body.price_per_unit * multiplier, 10)
-        expiration  = body.expiration_date.isoformat() if body.expiration_date is not None else None
-        underlying  = body.underlying.strip().upper() if body.underlying else None
-        maturity    = body.maturity_date.isoformat() if body.maturity_date is not None else None
-        accrued     = round(float(body.accrued_interest), 10) if body.accrued_interest else 0.0
-        if accrued < 0:
-            raise HTTPException(status_code=422, detail="accrued_interest must be >= 0.")
-
-        # Native currency: explicit > the instrument's > the base currency. fx_rate
-        # converts the native amounts into base; the cash pool is kept in base.
-        trade_currency = ((body.trade_currency or instr_currency or _base_currency(cur)) or "USD").strip().upper()
-        fx_rate        = _resolve_fx(conn, cur, trade_currency, body.fx_rate)
-
-        commission      = _compute_commission(cur, body.broker_id, body.quantity, body.commission)
-        net_total_value = _net_total(body.action, total_value, commission)
-        # Bonds: the buyer pays accrued interest on top of the clean price; the
-        # seller receives it. Bundled into the cash flow so the broker's debit
-        # matches reality, but kept out of total_value/cost basis so realized P&L
-        # reflects principal gain/loss only.
-        cash_native     = net_total_value + (accrued if body.action == "buy" else -accrued)
-        net_total_base  = round(cash_native * fx_rate, 10)
-
-        cur.execute(
-            "INSERT INTO trades "
-            "(user_id, broker_id, instrument_id, ticker, trade_type, action, quantity, price_per_unit, "
-            "total_value, trade_date, notes, remaining_quantity, commission, net_total_value, "
-            "multiplier, strike_price, expiration_date, underlying, direction, trade_currency, fx_rate, "
-            "face_value, coupon_rate, coupon_frequency, maturity_date, accrued_interest) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                user_id, body.broker_id, body.instrument_id, body.ticker.strip().upper(),
-                trade_type, body.action, body.quantity, body.price_per_unit, total_value,
-                body.trade_date.isoformat(), body.notes, body.quantity,
-                commission, net_total_value,
-                multiplier, body.strike_price, expiration, underlying, direction,
-                trade_currency, fx_rate,
-                face_value, body.coupon_rate, body.coupon_frequency, maturity, accrued,
-            ),
-        )
-        trade_id = cur.lastrowid
-
-        if body.action == "buy":
-            # Long open: deduct the commission-inclusive net (in base currency) so the
-            # cash pool matches what the broker actually debits (gross cost + commission
-            # + bond accrued interest).
-            cur.execute(
-                "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
-                "VALUES (?, 'buy_deduction', ?, ?)",
-                (user_id, -net_total_base, trade_id),
-            )
-        else:
-            # Short open (sell-to-open): credit the proceeds net of commission, as the
-            # broker deposits the sale proceeds into the account. The liability to buy
-            # the shares back is tracked by the open short lot, not the cash pool.
-            cur.execute(
-                "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
-                "VALUES (?, 'sell_proceeds', ?, ?)",
-                (user_id, net_total_base, trade_id),
-            )
-
+        trade_id = _create_trade_row(conn, cur, user_id, body, direction)
         conn.commit()
         stats_cache.invalidate(user_id)
         cur.execute(_TRADE_SELECT + " WHERE t.id = ?", (trade_id,))
         row = cur.fetchone()
     except HTTPException:
+        conn.rollback()
         raise
     except sqlite3.Error as exc:
         conn.rollback()
@@ -778,6 +813,40 @@ def create_trade(user_id: int, body: TradeCreate):
         conn.close()
 
     return _row_to_trade(row)
+
+
+@app.post("/trades/bulk", status_code=201)
+def bulk_create_trades(body: BulkTradeCreate):
+    """Apply one identical opening trade to several users at once. All-or-nothing:
+    every user's trade is inserted in a single transaction, so if any one fails
+    validation (unknown user, broker, trade type, …) nothing is written."""
+    if not body.user_ids:
+        raise HTTPException(status_code=422, detail="Select at least one user.")
+    # Dedupe while preserving order so a repeated id can't double-insert for a user.
+    user_ids = list(dict.fromkeys(body.user_ids))
+    direction = _validate_trade_body(body)
+
+    conn = _db()
+    created = []
+    try:
+        cur = conn.cursor()
+        for uid in user_ids:
+            trade_id = _create_trade_row(conn, cur, uid, body, direction)
+            created.append({"user_id": uid, "trade_id": trade_id})
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except sqlite3.Error as exc:
+        conn.rollback()
+        logger.error("bulk_create_trades DB error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to create trades.")
+    finally:
+        conn.close()
+
+    for item in created:
+        stats_cache.invalidate(item["user_id"])
+    return {"created": created, "count": len(created)}
 
 
 @app.put("/trades/{trade_id}")
@@ -806,7 +875,7 @@ def update_trade(trade_id: int, body: TradeUpdate):
         action         = body.action                        if body.action         is not None else existing[4]
         quantity       = body.quantity                      if body.quantity       is not None else float(existing[5])
         price_per_unit = body.price_per_unit                if body.price_per_unit is not None else float(existing[6])
-        trade_date     = body.trade_date.isoformat()        if body.trade_date     is not None else existing[8]
+        trade_date     = _dt_to_storage(body.trade_date)    if body.trade_date     is not None else existing[8]
         notes          = body.notes                         if body.notes          is not None else existing[9]
         broker_id      = body.broker_id                     if body.broker_id      is not None else existing[13]
 
@@ -1466,7 +1535,7 @@ _EVENT_CASH_TYPE = {"dividend": "dividend", "interest": "interest", "fee": "fee"
 
 class EventCreate(BaseModel):
     event_type: str
-    event_date: datetime.date
+    event_date: datetime.datetime  # full timestamp; a date-only value coerces to midnight
     instrument_id: Optional[int] = None
     ticker: Optional[str] = None        # free-text fallback when instrument_id is None
     amount: Optional[float] = None      # dividend: per-share; interest/fee: total
@@ -1483,7 +1552,7 @@ def _shares_held(cur: sqlite3.Cursor, user_id: int, instrument_id: int, on_date:
         "SELECT COALESCE(SUM(remaining_quantity), 0) FROM trades "
         "WHERE user_id = ? AND instrument_id = ? "
         "AND action = 'buy' AND direction = 'long' "
-        "AND status IN ('open', 'partial') AND trade_date <= ?",
+        "AND status IN ('open', 'partial') AND date(trade_date) <= date(?)",
         (user_id, instrument_id, on_date),
     )
     return float(cur.fetchone()[0] or 0)
@@ -1498,7 +1567,7 @@ def _apply_split(cur: sqlite3.Cursor, user_id: int, instrument_id: int, ratio: f
         "SELECT id, quantity, remaining_quantity, price_per_unit FROM trades "
         "WHERE user_id = ? AND instrument_id = ? "
         "AND action = 'buy' AND direction = 'long' "
-        "AND status IN ('open', 'partial') AND trade_date <= ?",
+        "AND status IN ('open', 'partial') AND date(trade_date) <= date(?)",
         (user_id, instrument_id, on_date),
     )
     rows = cur.fetchall()
@@ -1570,7 +1639,7 @@ def create_event(user_id: int, body: EventCreate):
 
         currency = ((body.currency or instr_currency or _base_currency(cur)) or "USD").strip().upper()
         fx_rate  = _resolve_fx(conn, cur, currency, body.fx_rate)
-        event_date_iso = body.event_date.isoformat()
+        event_date_iso = _dt_to_storage(body.event_date)
 
         cur.execute(
             "INSERT INTO events (user_id, instrument_id, event_type, event_date, "
@@ -1659,7 +1728,7 @@ def delete_event(event_id: int):
             # inverse, so we reject that case rather than corrupt state.
             after = cur.execute(
                 "SELECT COUNT(*) FROM trades WHERE user_id = ? AND instrument_id = ? "
-                "AND action = 'buy' AND direction = 'long' AND trade_date > ?",
+                "AND action = 'buy' AND direction = 'long' AND date(trade_date) > date(?)",
                 (user_id, instrument_id, event_date),
             ).fetchone()[0]
             if after:
@@ -2155,7 +2224,7 @@ def get_user_growth(
                 SELECT date, SUM(cost_basis_delta) AS cost_basis_delta,
                              SUM(realized_pnl_delta) AS realized_pnl_delta
                 FROM (
-                    SELECT trade_date AS date,
+                    SELECT date(trade_date) AS date,
                            SUM(CASE WHEN status IN ('open', 'partial')
                                     THEN remaining_quantity
                                          * COALESCE(net_total_value, total_value + commission)
@@ -2164,13 +2233,13 @@ def get_user_growth(
                                     ELSE 0 END) AS cost_basis_delta,
                            0.0 AS realized_pnl_delta
                     FROM   user_buys
-                    GROUP  BY trade_date
+                    GROUP  BY date(trade_date)
                     UNION ALL
-                    SELECT sell_date AS date,
+                    SELECT date(sell_date) AS date,
                            0.0 AS cost_basis_delta,
                            SUM(realized_pnl) AS realized_pnl_delta
                     FROM   user_sells
-                    GROUP  BY sell_date
+                    GROUP  BY date(sell_date)
                 )
                 GROUP BY date
                 ORDER BY date

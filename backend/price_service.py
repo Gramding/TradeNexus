@@ -1,4 +1,5 @@
 import abc
+import asyncio
 import datetime
 import logging
 import re
@@ -6,6 +7,9 @@ import sqlite3
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# A German/European ISIN: 2-letter country code, 9 alphanumerics, 1 check digit.
+ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +50,166 @@ class YahooFinanceSource(PriceSource):
         except Exception as exc:
             logger.warning("YahooFinanceSource.fetch(%s) failed: %s", ticker, exc)
             return None
+
+
+# ---------------------------------------------------------------------------
+# Onvista (onvista.de) implementation
+# ---------------------------------------------------------------------------
+#
+# onvista.de exposes a non-public REST API that we call directly with aiohttp. We
+# avoid the faceted instruments/search/facet endpoint because it silently drops
+# DERIVATIVE/WARRANT/certificate instruments — so warrants like DE000GW1MCC0 came
+# back empty. Two quirks drive the code below:
+#   1. onvista returns HTTP 429 to the default aiohttp User-Agent, so the session
+#      must carry a browser-like UA.
+#   2. The price snapshot lives under a per-type path segment (stocks/funds/bonds/
+#      derivatives/...). We learn the instrument's entityType from the untyped
+#      instruments/search endpoint (which returns *every* type) and pick the segment.
+# Prices come from German marketplaces (Frankfurt/Tradegate/Xetra), typically in EUR.
+
+_ONVISTA_UA = "Mozilla/5.0 (compatible; TradeNexus price source)"
+_ONVISTA_API_BASE = "https://api.onvista.de/api/v1"
+
+# onvista entityType -> the path segment of its snapshot endpoint. onvista files
+# ETFs under FUND. Types not listed have no resolvable snapshot path and return None.
+_ONVISTA_SNAPSHOT_PATH = {
+    "STOCK":      "stocks",
+    "FUND":       "funds",
+    "BOND":       "bonds",
+    "DERIVATIVE": "derivatives",
+    "INDEX":      "indices",
+    "CURRENCY":   "currencies",
+    "CRYPTO":     "cryptos",
+    "COMMODITY":  "commodities",
+    "FUTURE":     "futures",
+}
+
+# onvista entityType -> our instruments.asset_class vocabulary.
+_ONVISTA_TYPE_TO_ASSET_CLASS = {
+    "STOCK":      "stock",
+    "FUND":       "etf",
+    "BOND":       "bond",
+    "DERIVATIVE": "other",
+    "INDEX":      "other",
+    "CURRENCY":   "forex",
+    "CRYPTO":     "crypto",
+    "COMMODITY":  "other",
+    "FUTURE":     "futures",
+}
+
+
+async def _onvista_resolve(isin: str) -> Optional[dict]:
+    """Resolve an ISIN to a normalized onvista snapshot dict, or None on a miss.
+
+    Hits the untyped instruments/search (which, unlike the faceted search, also
+    returns derivatives/warrants/certificates), maps the matched instrument's
+    entityType to its snapshot path, then reads the latest price from that snapshot.
+    aiohttp is imported lazily so the module loads without it.
+
+    Returns {price, currency, name, symbol, entity_type, exchange, isin} or None.
+    """
+    import aiohttp
+
+    headers = {"User-Agent": _ONVISTA_UA}
+    async with aiohttp.ClientSession(headers=headers) as session:
+        async with session.get(
+            f"{_ONVISTA_API_BASE}/instruments/search", params={"searchValue": isin}
+        ) as resp:
+            if resp.status != 200:
+                return None
+            hits = (await resp.json()).get("list") or []
+        if not hits:
+            return None
+        # Prefer an exact ISIN match; otherwise take onvista's best hit.
+        item = next((h for h in hits if (h.get("isin") or "").upper() == isin), hits[0])
+        segment = _ONVISTA_SNAPSHOT_PATH.get((item.get("entityType") or "").upper())
+        if segment is None:
+            return None
+        async with session.get(
+            f"{_ONVISTA_API_BASE}/{segment}/ISIN:{isin}/snapshot"
+        ) as resp:
+            if resp.status != 200:
+                return None
+            snapshot = await resp.json()
+
+    quote = snapshot.get("quote") or {}
+    # 'last' is the most recent trade; fall back to the prior close / ask so a thinly
+    # traded warrant with no print yet today still yields a usable price.
+    price = quote.get("last")
+    if price is None:
+        price = quote.get("previousLast") or quote.get("ask")
+    if price is None:
+        return None
+    instrument = snapshot.get("instrument") or {}
+    market = quote.get("market") or {}
+    return {
+        "price":       float(price),
+        "currency":    quote.get("isoCurrency") or "EUR",
+        "name":        instrument.get("name") or item.get("name"),
+        "symbol":      instrument.get("symbol") or item.get("symbol"),
+        "entity_type": (item.get("entityType") or "").upper(),
+        "exchange":    market.get("codeExchange") or market.get("name"),
+        "isin":        isin,
+    }
+
+
+def _onvista_run(coro):
+    """Drive an onvista coroutine to completion from sync code. FastAPI sync routes
+    run in a worker thread with no event loop, so a fresh loop via asyncio.run is
+    safe here."""
+    return asyncio.run(coro)
+
+
+class OnvistaSource(PriceSource):
+    SOURCE_NAME = "onvista"
+    CURRENCY = "EUR"  # onvista quotes German-marketplace prices, denominated in EUR
+
+    def fetch(self, identifier: str) -> Optional[dict]:
+        """*identifier* is an ISIN (e.g. "DE000BASF111")."""
+        isin = (identifier or "").strip().upper()
+        if not ISIN_RE.match(isin):
+            logger.warning("OnvistaSource.fetch: %r is not an ISIN", identifier)
+            return None
+        try:
+            data = _onvista_run(_onvista_resolve(isin))
+        except Exception as exc:
+            logger.warning("OnvistaSource.fetch(%s) failed: %s", isin, exc)
+            return None
+        if not data or data.get("price") is None:
+            return None
+        return {
+            "price":    float(data["price"]),
+            "currency": data.get("currency") or self.CURRENCY,
+            "source":   self.SOURCE_NAME,
+        }
+
+
+def resolve_isin(isin: str) -> Optional[dict]:
+    """Resolve an ISIN to an instrument dict via onvista, or None on miss/failure.
+
+    The shape matches search_instruments() results (symbol, ticker, name, exchange,
+    asset_class, currency, isin) so the instrument-search route returns it
+    uniformly. The ISIN is used as the stable `symbol` key because onvista prices
+    by ISIN, while `ticker` carries the short onvista symbol (e.g. "BAS")."""
+    isin = (isin or "").strip().upper()
+    if not ISIN_RE.match(isin):
+        return None
+    try:
+        data = _onvista_run(_onvista_resolve(isin))
+    except Exception as exc:
+        logger.warning("resolve_isin(%s) failed: %s", isin, exc)
+        return None
+    if not data:
+        return None
+    return {
+        "symbol":      isin,
+        "ticker":      data.get("symbol") or isin,
+        "name":        data.get("name"),
+        "exchange":    data.get("exchange"),
+        "asset_class": _ONVISTA_TYPE_TO_ASSET_CLASS.get(data.get("entity_type", ""), "other"),
+        "currency":    data.get("currency") or OnvistaSource.CURRENCY,
+        "isin":        isin,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +280,7 @@ def search_instruments(query: str, limit: int = _SEARCH_RESULT_LIMIT) -> list[di
 
 _SOURCES: dict[str, type[PriceSource]] = {
     "yahoo_finance": YahooFinanceSource,
+    "onvista":       OnvistaSource,
 }
 
 

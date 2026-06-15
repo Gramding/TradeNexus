@@ -54,6 +54,14 @@ HIDDEN_IMPORTS = [
     "appdirs",
     "bs4",
     "pytz",
+    # Onvista price source: pyonvista + aiohttp are imported lazily inside
+    # price_service._onvista_resolve(), so the static import graph misses them.
+    "pyonvista",
+    "pyonvista.api",
+    "pyonvista.util",
+    "aiohappyeyeballs",
+    "attr",
+    "attrs",
 ]
 
 # Packages whose C extensions, data files, and submodules require --collect-all
@@ -68,6 +76,14 @@ COLLECT_ALL = [
     # static import graph misses them. Needed for the /settings/restore upload.
     "python_multipart",
     "multipart",
+    # aiohttp (Onvista) C extensions + its compiled deps; lazy-imported, so the
+    # walk misses them entirely without --collect-all.
+    "aiohttp",
+    "multidict",
+    "yarl",
+    "frozenlist",
+    "propcache",
+    "aiosignal",
 ]
 
 

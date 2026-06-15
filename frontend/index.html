@@ -34,6 +34,10 @@
         <div class="spinner"></div>
       </div>
       <div id="user-list-error" class="inline-error sidebar-error hidden"></div>
+      <div id="user-search-wrap" class="hidden">
+        <input id="user-search" type="search" data-i18n-placeholder="app.search_users" placeholder="Search users" autocomplete="off" aria-label="Search users" />
+        <button id="btn-mass-trade" type="button" class="mass-trade-btn" data-i18n-title="app.mass_add_trade" title="Mass add trade"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg><span data-i18n="app.mass_add_trade">Mass add trade</span></button>
+      </div>
       <ul id="user-list"></ul>
 
       <div id="settings-nav">
@@ -186,12 +190,12 @@
                 <input id="trade-quantity" type="number" min="0.0001" step="any" placeholder="0" required />
               </div>
               <div class="field">
-                <label for="trade-price" data-i18n="trade_form.price_per_unit">Price per unit ($)</label>
+                <label for="trade-price" data-i18n="trade_form.price_per_unit">Price per unit</label>
                 <input id="trade-price" type="number" min="0" step="any" placeholder="0.00" required />
               </div>
               <div class="field">
                 <label for="trade-date" data-i18n="trade_form.trade_date">Trade date</label>
-                <input id="trade-date" type="date" required />
+                <input id="trade-date" type="datetime-local" step="1" required />
               </div>
               <div class="field">
                 <label for="trade-broker" data-i18n="trade_form.broker">Broker</label>
@@ -210,7 +214,7 @@
                 <p class="field-hint" data-i18n="trade_form.multiplier_hint">Shares per contract. Standard US equity options are 100.</p>
               </div>
               <div class="field">
-                <label for="trade-strike" data-i18n="trade_form.strike">Strike price ($)</label>
+                <label for="trade-strike" data-i18n="trade_form.strike">Strike price</label>
                 <input id="trade-strike" type="number" min="0" step="any" placeholder="0.00" />
               </div>
               <div class="field">
@@ -281,6 +285,17 @@
             <div class="field" id="total-preview-wrap">
               <span class="label-like" data-i18n="trade_form.total_value">Total value</span>
               <span id="total-preview">—</span>
+            </div>
+
+            <div id="mass-user-select" class="mass-user-select hidden">
+              <div class="mass-user-head">
+                <span class="label-like" data-i18n="trade_form.apply_to_users">Apply to users</span>
+                <label class="mass-select-all">
+                  <input type="checkbox" id="mass-select-all" />
+                  <span data-i18n="trade_form.select_all">Select all</span>
+                </label>
+              </div>
+              <div id="mass-user-list" class="mass-user-list"></div>
             </div>
 
             <div id="add-trade-error" class="inline-error hidden"></div>
@@ -385,7 +400,7 @@
                   <option value="interest" data-i18n="events.type_interest">Interest</option>
                   <option value="fee" data-i18n="events.type_fee">Fee</option>
                 </select>
-                <input id="event-date" type="date" required />
+                <input id="event-date" type="datetime-local" step="1" required />
               </div>
               <div class="form-row" id="event-instrument-row">
                 <input id="event-instrument" type="text" autocomplete="off"
@@ -541,6 +556,7 @@
                   <label for="broker-source-input" data-i18n="settings.broker_price_source">Price Source</label>
                   <select id="broker-source-input">
                     <option value="yahoo_finance">Yahoo Finance</option>
+                    <option value="onvista">Onvista</option>
                   </select>
                 </div>
                 <div class="field broker-color-field">
@@ -555,11 +571,11 @@
               </div>
               <div class="field-group">
                 <div class="field">
-                  <label for="broker-commission-flat-input" data-i18n="settings.broker_flat_fee">Flat fee per trade ($)</label>
+                  <label for="broker-commission-flat-input" data-i18n="settings.broker_flat_fee">Flat fee per trade</label>
                   <input id="broker-commission-flat-input" type="number" min="0" step="0.01" placeholder="0.00" autocomplete="off" />
                 </div>
                 <div class="field">
-                  <label for="broker-commission-per-unit-input" data-i18n="settings.broker_per_unit_fee">Per share/contract fee ($)</label>
+                  <label for="broker-commission-per-unit-input" data-i18n="settings.broker_per_unit_fee">Per share/contract fee</label>
                   <input id="broker-commission-per-unit-input" type="number" min="0" step="0.01" placeholder="0.00" autocomplete="off" />
                 </div>
               </div>
@@ -714,12 +730,12 @@
               <input id="edit-quantity" type="number" min="0.0001" step="any" />
             </div>
             <div class="field">
-              <label for="edit-price" data-i18n="trade_form.price_per_unit">Price per unit ($)</label>
+              <label for="edit-price" data-i18n="trade_form.price_per_unit">Price per unit</label>
               <input id="edit-price" type="number" min="0" step="any" />
             </div>
             <div class="field">
               <label for="edit-date" data-i18n="trade_form.trade_date">Trade date</label>
-              <input id="edit-date" type="date" />
+              <input id="edit-date" type="datetime-local" step="1" />
             </div>
             <div class="field">
               <label for="edit-broker" data-i18n="trade_form.broker">Broker</label>
@@ -786,7 +802,7 @@
             <span class="sell-max-hint" id="sell-max-hint"></span>
           </div>
           <div class="field">
-            <label for="sell-price-input" data-i18n="sell_form.sell_price">Sell Price / Unit ($)</label>
+            <label for="sell-price-input" data-i18n="sell_form.sell_price">Sell Price / Unit</label>
             <input id="sell-price-input" type="number" min="0" step="any" placeholder="0.00" />
             <span class="sell-current-price" id="sell-current-price"></span>
           </div>
@@ -921,6 +937,17 @@
               <option value="60" data-i18n="settings.refresh_60">Every 60 min</option>
             </select>
             <span class="settings-status" data-status="price_refresh_interval_minutes"></span>
+          </div>
+        </div>
+
+        <div class="settings-field">
+          <label for="setting-price-source" data-i18n="settings.price_source">Price source</label>
+          <div class="settings-control">
+            <select id="setting-price-source" data-key="price_source">
+              <option value="yahoo_finance">Yahoo Finance</option>
+              <option value="onvista">Onvista</option>
+            </select>
+            <span class="settings-status" data-status="price_source"></span>
           </div>
         </div>
 

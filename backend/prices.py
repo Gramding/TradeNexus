@@ -5,11 +5,27 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from db import get_connection
-from price_service import get_or_fetch_price, get_cached_price, get_price_source
+from price_service import get_or_fetch_price, get_cached_price, get_price_source, ISIN_RE
 import fx_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["prices"])
+
+
+def _first_isin(*candidates) -> str | None:
+    """Return the first ISIN-shaped candidate (normalized), else None.
+
+    onvista prices by ISIN, but the dedicated instruments.isin column is often
+    blank while the ISIN lives in symbol/ticker — ISIN-keyed instruments store the
+    ISIN as the symbol, and free-text trades are logged under their ISIN. This
+    recovers it so a position still resolves a price instead of showing n/a.
+    """
+    for c in candidates:
+        if c:
+            v = str(c).strip().upper()
+            if ISIN_RE.match(v):
+                return v
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +196,7 @@ def get_positions_with_prices(
             "SELECT t.id, t.ticker, t.trade_type, t.trade_date, t.remaining_quantity, "
             "t.price_per_unit, t.status, t.broker_id, b.color, t.quantity, t.commission, "
             "i.symbol, i.name, i.exchange, i.asset_class, i.id, t.multiplier, t.direction, "
-            "t.trade_currency, t.fx_rate, t.strike_price, t.expiration_date "
+            "t.trade_currency, t.fx_rate, t.strike_price, t.expiration_date, i.isin "
             "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
             "LEFT JOIN instruments i ON t.instrument_id = i.id "
             "WHERE t.user_id = ? AND t.status IN ('open', 'partial') "
@@ -198,7 +214,7 @@ def get_positions_with_prices(
              status, broker_id, broker_color, orig_quantity, buy_commission,
              instr_symbol, instr_name, instr_exchange, instr_asset_class, instr_id,
              multiplier, direction, trade_currency, fx_rate,
-             strike_price, expiration_date) in rows:
+             strike_price, expiration_date, instr_isin) in rows:
             remaining_qty  = float(remaining_qty)
             price_per_unit = float(price_per_unit)
             multiplier     = float(multiplier) if multiplier is not None else 1.0
@@ -209,6 +225,7 @@ def get_positions_with_prices(
                 groups[key] = {
                     "ticker":                   ticker,
                     "symbol":                   instr_symbol,  # first non-null wins below
+                    "isin":                     instr_isin,
                     "instrument_id":            instr_id,
                     "name":                     instr_name,
                     "exchange":                 instr_exchange,
@@ -230,6 +247,7 @@ def get_positions_with_prices(
             # Keep the first instrument fields seen for this ticker group.
             if groups[key]["symbol"] is None and instr_symbol is not None:
                 groups[key]["symbol"]        = instr_symbol
+                groups[key]["isin"]          = instr_isin
                 groups[key]["instrument_id"] = instr_id
                 groups[key]["name"]          = instr_name
                 groups[key]["exchange"]      = instr_exchange
@@ -273,14 +291,22 @@ def get_positions_with_prices(
             broker_color = dominant["color"] if dominant else None
             broker_id    = dominant["broker_id"] if dominant else None
 
-            # Fetch by Yahoo symbol; fall back to the display ticker for positions
-            # whose trades aren't linked to an instrument yet.
-            fetch_symbol = g["symbol"] or g["ticker"]
-            try:
-                price_data = get_or_fetch_price(conn, fetch_symbol, source)
-            except Exception as exc:
-                logger.warning("positions/prices: price fetch failed for %s: %s", fetch_symbol, exc)
-                price_data = None
+            # The identifier depends on the source: onvista prices by ISIN, while
+            # Yahoo prices by symbol (falling back to the display ticker for
+            # positions whose trades aren't linked to an instrument yet). For onvista
+            # the ISIN may live in symbol/ticker when the isin column is blank, so
+            # recover it from there rather than failing to a blank fetch.
+            if source == "onvista":
+                fetch_symbol = _first_isin(g["isin"], g["symbol"], g["ticker"])
+            else:
+                fetch_symbol = g["symbol"] or g["ticker"]
+            price_data = None
+            if fetch_symbol:
+                try:
+                    price_data = get_or_fetch_price(conn, fetch_symbol, source)
+                except Exception as exc:
+                    logger.warning("positions/prices: price fetch failed for %s: %s", fetch_symbol, exc)
+                    price_data = None
 
             current_price = price_data["price"] if price_data else None
 
@@ -332,6 +358,8 @@ def get_positions_with_prices(
             positions.append({
                 "ticker":                   g["ticker"],
                 "symbol":                   g["symbol"] or g["ticker"],
+                "isin":                     g["isin"],
+                "price_id":                 fetch_symbol,   # identifier used to fetch (symbol or ISIN)
                 "instrument_id":            g["instrument_id"],
                 "broker_id":                broker_id,
                 "name":                     g["name"],

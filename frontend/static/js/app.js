@@ -3,11 +3,18 @@ const API = 'http://localhost:8765';
 // ── State ────────────────────────────────────────────────────────────────────
 let activeUserId   = null;
 let activeUserName = null;
+let massMode       = false;   // Add Trade form is fanning one trade out to many users
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 const userList          = document.getElementById('user-list');
 const userListSpinner   = document.getElementById('user-list-spinner');
 const userListError     = document.getElementById('user-list-error');
+const userSearchWrap    = document.getElementById('user-search-wrap');
+const userSearch        = document.getElementById('user-search');
+const btnMassTrade      = document.getElementById('btn-mass-trade');
+const massUserSelect    = document.getElementById('mass-user-select');
+const massUserList      = document.getElementById('mass-user-list');
+const massSelectAll     = document.getElementById('mass-select-all');
 const emptyState        = document.getElementById('empty-state');
 const userPanel         = document.getElementById('user-panel');
 const userPanelName     = document.getElementById('user-panel-name');
@@ -206,7 +213,10 @@ function badge(value) {
   return `<span class="badge badge-${String(value).toLowerCase()}">${value}</span>`;
 }
 
-const SOURCE_LABELS = { yahoo_finance: 'Yahoo Finance' };
+const SOURCE_LABELS = { yahoo_finance: 'Yahoo Finance', onvista: 'Onvista' };
+
+// The global price source that drives live fetching (configured in Settings).
+function priceSource() { return appSettings.price_source || 'yahoo_finance'; }
 function sourceBadge(source) {
   const label = SOURCE_LABELS[source] || source;
   return `<span class="badge badge-${source.replace(/_/g, '-')}">${label}</span>`;
@@ -254,12 +264,15 @@ async function resolveQuoteUrl(key, path) {
 }
 
 // Descriptor builders → {key, path} for the two quote-url endpoints.
+// The cache key includes the active price source so changing it in Settings
+// (which moves the non-broker fallback between Yahoo and Onvista) doesn't serve a
+// stale resolved link.
 function tradeQuoteDesc(tradeId) {
-  return { key: `trade:${tradeId}`, path: `/trades/${tradeId}/quote-url` };
+  return { key: `trade:${tradeId}:${priceSource()}`, path: `/trades/${tradeId}/quote-url` };
 }
 function instrumentQuoteDesc(instrumentId, brokerId) {
   const q = brokerId != null ? `?broker_id=${brokerId}` : '';
-  return { key: `instr:${instrumentId}:${brokerId ?? ''}`, path: `/instruments/${instrumentId}/quote-url${q}` };
+  return { key: `instr:${instrumentId}:${brokerId ?? ''}:${priceSource()}`, path: `/instruments/${instrumentId}/quote-url${q}` };
 }
 
 // Inner markup for a clickable ticker. `text` is shown; `hint` is the pre-fetch
@@ -347,7 +360,10 @@ function switchTab(name, opts = {}) {
   }
 }
 
-tabBtns.forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+tabBtns.forEach(btn => btn.addEventListener('click', () => {
+  exitMassMode();   // navigating the tabs by hand drops mass mode
+  switchTab(btn.dataset.tab);
+}));
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 async function loadUsers() {
@@ -364,17 +380,46 @@ async function loadUsers() {
   }
 }
 
+// The full, unfiltered user list as last loaded from the server. The sidebar
+// search box filters this in-memory; renderFilteredUsers() paints the subset.
+let allUsers = [];
+
 function renderUserList(users) {
+  allUsers = users;
+  // The search box and mass-trade button only make sense with more than one user.
+  userSearchWrap.classList.toggle('hidden', users.length <= 1);
+  // If the list shrank below two users while mass mode was open, leave it.
+  if (massMode && users.length <= 1) exitMassMode();
+  renderFilteredUsers();
+  onUsersRendered(users);   // welcome/empty-state logic keys off the full list
+}
+
+function renderFilteredUsers() {
   userList.innerHTML = '';
-  if (!users.length) {
+
+  if (!allUsers.length) {
     const li = document.createElement('li');
     li.className = 'empty-msg';
     li.textContent = i18n.t('app.no_users');
     userList.appendChild(li);
-    onUsersRendered(users);
     return;
   }
-  users.forEach(u => {
+
+  const q = userSearch.value.trim().toLowerCase();
+  const filtered = q
+    ? allUsers.filter(u =>
+        u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
+    : allUsers;
+
+  if (!filtered.length) {
+    const li = document.createElement('li');
+    li.className = 'empty-msg';
+    li.textContent = i18n.t('app.no_user_matches');
+    userList.appendChild(li);
+    return;
+  }
+
+  filtered.forEach(u => {
     const li = document.createElement('li');
     if (u.id === activeUserId) li.classList.add('active');
 
@@ -390,15 +435,88 @@ function renderUserList(users) {
     li.addEventListener('click', e => selectUser(u, e.currentTarget));
     userList.appendChild(li);
   });
-  onUsersRendered(users);
 }
+
+// Filter as the user types; Escape clears the box and restores the full list.
+userSearch.addEventListener('input', renderFilteredUsers);
+userSearch.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && userSearch.value) {
+    userSearch.value = '';
+    renderFilteredUsers();
+  }
+});
+
+// ── Mass add trade ──────────────────────────────────────────────────────────────
+// Reuses the regular Add Trade form (full field parity) but, when in mass mode,
+// fans the one trade out to every checked user via the atomic /trades/bulk endpoint.
+btnMassTrade.addEventListener('click', enterMassMode);
+
+function enterMassMode() {
+  if (allUsers.length < 2) return;
+  // The Add Trade form lives inside the user panel, which is hidden until a user is
+  // selected. Pick the first user so the form renders if nothing is active yet.
+  if (!activeUserId) selectUser(allUsers[0], null);
+  massMode = true;
+  renderMassUserList();
+  massUserSelect.classList.remove('hidden');
+  switchTab('add-trade');
+  massUserSelect.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function exitMassMode() {
+  massMode = false;
+  massUserSelect.classList.add('hidden');
+}
+
+function renderMassUserList() {
+  massUserList.innerHTML = '';
+  allUsers.forEach(u => {
+    const label = document.createElement('label');
+    label.className = 'mass-user-item';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = u.id;
+    cb.checked = true;
+    cb.addEventListener('change', updateMassSelectAllState);
+
+    const span = document.createElement('span');
+    span.textContent = u.name;
+
+    label.append(cb, span);
+    massUserList.appendChild(label);
+  });
+  massSelectAll.checked = true;
+  massSelectAll.indeterminate = false;
+}
+
+function massUserCheckboxes() {
+  return [...massUserList.querySelectorAll('input[type="checkbox"]')];
+}
+
+function selectedMassUserIds() {
+  return massUserCheckboxes().filter(cb => cb.checked).map(cb => parseInt(cb.value, 10));
+}
+
+function updateMassSelectAllState() {
+  const boxes = massUserCheckboxes();
+  const checked = boxes.filter(b => b.checked).length;
+  massSelectAll.checked = checked === boxes.length;
+  massSelectAll.indeterminate = checked > 0 && checked < boxes.length;
+}
+
+massSelectAll.addEventListener('change', () => {
+  massUserCheckboxes().forEach(cb => { cb.checked = massSelectAll.checked; });
+  massSelectAll.indeterminate = false;
+});
 
 function selectUser(u, li) {
   activeUserId   = u.id;
   activeUserName = u.name;
+  exitMassMode();   // switching the active user leaves any mass fan-out in progress
 
   document.querySelectorAll('#user-list li').forEach(el => el.classList.remove('active'));
-  li.classList.add('active');
+  if (li) li.classList.add('active');
 
   document.querySelectorAll('.settings-nav-item').forEach(i => i.classList.remove('active'));
   document.getElementById('settings-panel').classList.add('hidden');
@@ -479,6 +597,7 @@ async function saveUser() {
     await apiFetch('/users', { method: 'POST', body: JSON.stringify({ name, email }) });
     newUserName.value = newUserEmail.value = '';
     addUserForm.classList.add('hidden');
+    userSearch.value = '';   // clear any filter so the new user is visible
     showToast(i18n.t('app.user_created'));
     loadUsers();
   } catch (e) {
@@ -684,7 +803,7 @@ function renderTradesRows(trades, { append }) {
     const tr = document.createElement('tr');
     tr.dataset.tradeId = t.id;
     tr.innerHTML = `
-      <td>${formatDate(t.trade_date)}</td>
+      <td>${formatDateTime(t.trade_date)}</td>
       <td class="ticker-cell">
         ${exchangeBadge(t.exchange)}
         ${tickerLinkHtml(t.ticker.toUpperCase(), t.name)}
@@ -747,7 +866,7 @@ async function duplicateTrade(t) {
   tradePrice.value    = t.price_per_unit;
   tradeBrokerEl.value = t.broker_id != null ? String(t.broker_id) : '';
   tradeNotes.value    = t.notes ?? '';
-  tradeDate.value     = todayISO();   // new trade is logged today, not the original date
+  tradeDate.value     = nowLocalDateTimeISO();   // new trade is logged now, not the original date/time
 
   // Clear the commission override so it auto-recalculates from the broker.
   tradeCommOverride.checked = false;
@@ -915,18 +1034,20 @@ function relativeAge(utcString) {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
-async function autofillPriceFromCache(symbol) {
-  symbol = (symbol || '').trim().toUpperCase();
+async function autofillPriceFromCache(symbol, isin) {
+  // Onvista prices by ISIN, Yahoo by symbol — pick the identifier for the active
+  // source so we read the right cache key.
+  const identifier = ((priceSource() === 'onvista' && isin) ? isin : symbol || '').trim().toUpperCase();
 
-  if (!symbol) { lastAutofillTicker = ''; return; }   // cleared → allow re-fire later
-  if (symbol === lastAutofillTicker) return;          // already handled this entry
-  lastAutofillTicker = symbol;
+  if (!identifier) { lastAutofillTicker = ''; return; }   // cleared → allow re-fire later
+  if (identifier === lastAutofillTicker) return;          // already handled this entry
+  lastAutofillTicker = identifier;
 
   // Never overwrite a price the user typed themselves.
   if (tradePrice.value.trim() !== '') return;
 
   try {
-    const data = await apiFetch(`/prices/${encodeURIComponent(symbol)}?cache_only=true`);
+    const data = await apiFetch(`/prices/${encodeURIComponent(identifier)}?cache_only=true&source=${encodeURIComponent(priceSource())}`);
     if (!data || data.price == null) return;          // no cache → do nothing
     if (tradePrice.value.trim() !== '') return;       // user typed while we waited
 
@@ -1062,7 +1183,7 @@ async function selectInstrument(result) {
 
   // 5. Price autofill by the instrument's Yahoo symbol.
   lastAutofillTicker = '';
-  autofillPriceFromCache(inst.symbol);
+  autofillPriceFromCache(inst.symbol, inst.isin);
 
   // 6. Confirmation chip.
   renderInstrumentChip(inst);
@@ -1287,13 +1408,33 @@ addTradeForm.addEventListener('submit', async (e) => {
     if (ai > 0) payload.accrued_interest = ai;
   }
 
+  // In mass mode, require at least one selected user before doing anything.
+  let massUserIds = null;
+  if (massMode) {
+    massUserIds = selectedMassUserIds();
+    if (!massUserIds.length) {
+      showError(addTradeError, i18n.t('trade_form.select_users'));
+      return;
+    }
+  }
+
   btnSubmitTrade.disabled = true;
   try {
-    await apiFetch(`/users/${activeUserId}/trades`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    showToast(i18n.t('trades.added'));
+    if (massMode) {
+      // One atomic call: the trade is applied to every selected user, or none.
+      const res = await apiFetch('/trades/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ ...payload, user_ids: massUserIds }),
+      });
+      showToast(i18n.t('trade_form.mass_added', { count: res.count }));
+      exitMassMode();
+    } else {
+      await apiFetch(`/users/${activeUserId}/trades`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      showToast(i18n.t('trades.added'));
+    }
     resetAddTradeForm();
     switchTab('trades');
   } catch (e) {
@@ -1305,6 +1446,7 @@ addTradeForm.addEventListener('submit', async (e) => {
 
 function resetAddTradeForm() {
   addTradeForm.reset();
+  tradeDate.value = nowLocalDateTimeISO();   // default to now so the required datetime isn't blank
   clearInstrumentSelection();    // drop any picked instrument + unlock the input
   totalPreview.textContent = '—';
   tradeCommOverride.checked = false;
@@ -1841,7 +1983,7 @@ function renderCashRows(rows, { append }) {
     const sign = c.amount > 0 ? '+' : '';
     const typeLabel = i18n.t('cash.types.' + c.transaction_type);
     tr.innerHTML = `
-      <td>${formatDate(c.created_at)}</td>
+      <td>${formatDateTime(c.created_at, { utc: true })}</td>
       <td><span class="badge badge-${c.transaction_type.replace(/_/g, '-')}">${escHtml(typeLabel)}</span></td>
       <td class="num ${cls}">${sign}${formatCurrency(c.amount)}</td>
       <td class="notes-cell" title="${escHtml(c.note ?? '')}">${escHtml(c.note ?? '—')}</td>
@@ -1881,7 +2023,7 @@ async function loadPositions() {
 
   try {
     const [positions, cash] = await Promise.all([
-      apiFetch(`/users/${activeUserId}/positions/prices`),
+      apiFetch(`/users/${activeUserId}/positions/prices?source=${encodeURIComponent(priceSource())}`),
       apiFetch(`/users/${activeUserId}/cash`),
       ensureBrokers(),  // so the sell modal can estimate commissions
     ]);
@@ -1944,7 +2086,7 @@ function renderEvents(events) {
       ? `${formatNumber(e.ratio, 4)}×`
       : formatCurrencyIn(e.amount * (e.event_type === 'fee' ? -1 : 1), e.currency);
     tr.innerHTML = `
-      <td>${formatDate(e.event_date)}</td>
+      <td>${formatDateTime(e.event_date)}</td>
       <td><span class="badge badge-${e.event_type}">${escHtml(typeLabel)}</span></td>
       <td>${escHtml(e.ticker || '—')}</td>
       <td class="num">${detail}</td>
@@ -1991,7 +2133,7 @@ function updateEventFormFields() {
 document.getElementById('btn-add-event').addEventListener('click', () => {
   addEventForm.classList.toggle('hidden');
   if (!addEventForm.classList.contains('hidden')) {
-    eventDateEl.value = todayISO();
+    eventDateEl.value = nowLocalDateTimeISO();
     updateEventFormFields();
     eventTypeEl.focus();
   }
@@ -2057,6 +2199,19 @@ function _pnlPctHtml(value) {
   const cls  = value >= 0 ? 'pnl-pos' : 'pnl-neg';
   const sign = value > 0 ? '+' : '';
   return `<span class="${cls}">${sign}${value.toFixed(2)}%</span>`;
+}
+
+// The price column gets an explicit "unavailable" badge (not just a dash) when the
+// configured source returned no quote, with a tooltip naming the source so it's
+// clear *why*. The derived value / P&L cells stay a muted dash — they're blank only
+// as a consequence of the missing price.
+function priceUnavailableHtml() {
+  const src  = SOURCE_LABELS[priceSource()] || priceSource();
+  const hint = i18n.t('positions.price_unavailable_via', { source: src });
+  return `<span class="price-unavail" title="${escHtml(hint)}" aria-label="${escHtml(hint)}">`
+    + `<span class="price-unavail-icon" aria-hidden="true">⚠</span>`
+    + `<span class="price-unavail-text">${escHtml(i18n.t('positions.price_na_short'))}</span>`
+    + `</span>`;
 }
 
 // ── Client-side sorting (positions) ─────────────────────────────────────────────
@@ -2299,6 +2454,10 @@ function renderPositionsRows(positions) {
     tr.dataset.ticker = p.ticker;
     // Prices are fetched by Yahoo symbol; the display ticker stays user-friendly.
     tr.dataset.symbol = p.symbol || p.ticker;
+    // The identifier the backend actually fetched with (ISIN for onvista, symbol
+    // otherwise) — used so the refresh button re-fetches the same key. Falls back
+    // to the symbol when the server didn't report one.
+    tr.dataset.priceId = p.price_id || p.symbol || p.ticker;
     tr.innerHTML = `
       <td class="ticker-cell">
         ${exchangeBadge(p.exchange)}
@@ -2312,7 +2471,7 @@ function renderPositionsRows(positions) {
       <td class="num">${formatNumber(p.total_remaining_quantity)}</td>
       <td class="num">${formatCurrencyIn(p.avg_cost_per_unit, p.currency)}</td>
       <td class="num">${formatCurrencyIn(p.total_cost_basis, p.currency)}</td>
-      <td class="num price-col">${_priceHtml(p.current_price, p.currency)}</td>
+      <td class="num price-col">${p.current_price != null ? _priceHtml(p.current_price, p.currency) : priceUnavailableHtml()}</td>
       <td class="num price-col">${_priceHtml(p.current_value, p.currency)}</td>
       <td class="num price-col" title="${unrealizedBaseTitle(p)}">${_pnlHtml(p.unrealized_pnl, p.currency)}</td>
       <td class="num price-col">${_pnlPctHtml(p.unrealized_pnl_pct)}</td>
@@ -2366,8 +2525,9 @@ document.getElementById('btn-refresh-prices').addEventListener('click', async ()
   if (!activeUserId) return;
 
   const symbols = [...new Set(
-    Array.from(positionsTbody.querySelectorAll('tr[data-symbol]'))
-      .map(tr => tr.dataset.symbol)
+    Array.from(positionsTbody.querySelectorAll('tr[data-price-id]'))
+      .map(tr => tr.dataset.priceId)
+      .filter(Boolean)
   )];
   if (!symbols.length) return;
 
@@ -2380,7 +2540,7 @@ document.getElementById('btn-refresh-prices').addEventListener('click', async ()
   try {
     await apiFetch('/prices/refresh', {
       method: 'POST',
-      body: JSON.stringify({ symbols, source: 'yahoo_finance' }),
+      body: JSON.stringify({ symbols, source: priceSource() }),
     });
   } catch (e) {
     showToast(i18n.t('positions.refresh_failed', { error: e.message }), true);
@@ -2390,7 +2550,7 @@ document.getElementById('btn-refresh-prices').addEventListener('click', async ()
   // have partial results, and we always need to clear the skeleton.
   try {
     const [positions, cash] = await Promise.all([
-      apiFetch(`/users/${activeUserId}/positions/prices`),
+      apiFetch(`/users/${activeUserId}/positions/prices?source=${encodeURIComponent(priceSource())}`),
       apiFetch(`/users/${activeUserId}/cash`),
     ]);
     renderPositions(positions, cash.balance);
@@ -2428,6 +2588,24 @@ function todayISO() {
   return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
 }
 
+// Now, as a local 'YYYY-MM-DDTHH:MM:SS' string for seeding datetime-local inputs.
+function nowLocalDateTimeISO() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+       + `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// Convert a stored datetime ('YYYY-MM-DD HH:MM:SS') into the value a
+// datetime-local input expects ('YYYY-MM-DDTHH:MM:SS'). Legacy date-only values
+// get a midnight time so the picker still accepts them.
+function toInputDateTime(stored) {
+  if (!stored) return '';
+  const s = String(stored).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s}T00:00:00`;
+  return s.replace(' ', 'T').slice(0, 19);
+}
+
 function openSellModal(position) {
   // Sort lots oldest-first (FIFO); API should already return them sorted, but be defensive
   const lots = [...position.lots].sort((a, b) =>
@@ -2447,7 +2625,7 @@ function openSellModal(position) {
 
   sellLotsTbody.innerHTML = lots.map(lot => `
     <tr>
-      <td>${formatDate(lot.trade_date)}${lot.status === 'partial' ? `<span class="lot-status-partial">${escHtml(i18n.t('sell_form.lot_partial'))}</span>` : ''}</td>
+      <td>${formatDateTime(lot.trade_date)}${lot.status === 'partial' ? `<span class="lot-status-partial">${escHtml(i18n.t('sell_form.lot_partial'))}</span>` : ''}</td>
       <td class="num">${formatNumber(lot.remaining_quantity)}</td>
       <td class="num">${formatCurrency(lot.price_per_unit)}</td>
     </tr>
@@ -2811,6 +2989,7 @@ function populateGeneralSettings() {
   document.getElementById('setting-date-format').value       = appSettings.date_format ?? 'MM/DD/YYYY';
   document.getElementById('setting-decimal-separator').value = appSettings.decimal_separator ?? '.';
   document.getElementById('setting-refresh-interval').value  = String(appSettings.price_refresh_interval_minutes ?? '15');
+  document.getElementById('setting-price-source').value      = appSettings.price_source ?? 'yahoo_finance';
   document.getElementById('setting-fiscal-month').value      = String(appSettings.fiscal_year_start_month ?? '1');
   updateDateFormatPreview();
   syncUiPrefControls();   // theme / zoom / sidebar / density controls (same page)
@@ -3559,7 +3738,7 @@ async function openEditTradeModal(trade) {
   editAction.value   = trade.action;
   editQuantity.value = trade.quantity;
   editPrice.value    = trade.price_per_unit;
-  editDate.value     = trade.trade_date;
+  editDate.value     = toInputDateTime(trade.trade_date);
   editNotes.value    = trade.notes || '';
   clearError(editTradeError);
   const saveBtn = document.getElementById('btn-save-edit-trade');
@@ -4206,5 +4385,6 @@ loadAppSettings()
   ]))
   .then(() => {
     i18n.applyToDOM();   // translate any static [data-i18n] markup that's present
+    tradeDate.value = nowLocalDateTimeISO();   // pre-fill the trade datetime on first load
     loadUsers();
   });
