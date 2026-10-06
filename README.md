@@ -99,7 +99,15 @@ The backend listens on **`http://localhost:8765`** and exposes a health check at
 TradeNexus/
 ├── backend/                 # FastAPI application
 │   ├── entrypoint.py        # uvicorn launcher (serves on :8765)
-│   ├── main.py              # app, users, trades, sell lots, positions, cash, stats, search
+│   ├── main.py              # app setup: startup backup, CORS, router registration
+│   ├── common.py            # shared helpers (DB access, FX, multipliers, cursors)
+│   ├── users.py             # user routes
+│   ├── trades.py            # trade CRUD, bulk add, sell / cover, CSV export
+│   ├── positions.py         # open positions
+│   ├── cash.py              # cash pool, deposits, withdrawals
+│   ├── events.py            # dividends, splits, interest, fees
+│   ├── search.py            # global search
+│   ├── stats.py             # stats + growth chart
 │   ├── brokers.py           # broker CRUD router
 │   ├── prices.py            # price + cached-price routes
 │   ├── price_service.py     # cache lookup + Yahoo Finance fetch
