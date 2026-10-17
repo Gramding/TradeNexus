@@ -5,7 +5,9 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from db import get_connection
-from price_service import get_or_fetch_price, get_cached_price, get_price_source, ISIN_RE
+from price_service import (
+    get_or_fetch_price, get_cached_price, get_price_source, normalize_currency, ISIN_RE,
+)
 import fx_service
 
 logger = logging.getLogger(__name__)
@@ -188,6 +190,24 @@ def get_positions_with_prices(
         base_currency = ((base_ccy_row[0] if base_ccy_row else "USD") or "USD").strip().upper()
         _live_fx_cache: dict = {}
 
+        def live_fx(from_ccy: str, to_ccy: str):
+            """FX rate for display, cached per pair for this request. Falls back to
+            the last cached rate of any age; None when no rate is known at all, so
+            callers show n/a instead of a figure converted at a made-up 1.0."""
+            if from_ccy == to_ccy:
+                return 1.0
+            pair = (from_ccy, to_ccy)
+            if pair not in _live_fx_cache:
+                try:
+                    rate = fx_service.get_or_fetch_fx(conn, from_ccy, to_ccy)
+                except Exception as exc:
+                    logger.warning("positions/prices: FX %s->%s failed: %s", from_ccy, to_ccy, exc)
+                    rate = None
+                if rate is None:
+                    rate = fx_service.get_cached_fx(conn, from_ccy, to_ccy)
+                _live_fx_cache[pair] = rate
+            return _live_fx_cache[pair]
+
         # JOIN instruments so each position carries its Yahoo symbol; prices are
         # fetched by symbol while the display ticker is shown to the user.
         # Open lots: long opens (buy/long) and short opens (sell/short). Synthetic
@@ -308,25 +328,28 @@ def get_positions_with_prices(
                     logger.warning("positions/prices: price fetch failed for %s: %s", fetch_symbol, exc)
                     price_data = None
 
-            current_price = price_data["price"] if price_data else None
-
             direction = g["direction"]
-            position_currency = g["currency"]
+            position_currency = normalize_currency(g["currency"]) or "USD"
+
+            # The quote can be in a different currency than the position: onvista
+            # prices Apple in EUR on Tradegate while the trade was booked in USD.
+            # Convert it so value and P&L compare like with like.
+            current_price = None
+            quote_price = price_data["price"] if price_data else None
+            quote_currency = (price_data.get("currency") or position_currency) if price_data else None
+            price_error = None
+            if quote_price is not None:
+                quote_fx = live_fx(quote_currency, position_currency)
+                if quote_fx is None:
+                    price_error = f"No FX rate for {quote_currency} to {position_currency}"
+                else:
+                    current_price = round(quote_price * quote_fx, 10)
+            elif fetch_symbol:
+                price_error = "Price unavailable"
+
             # Live FX from the position's currency to the base, for the optional
-            # base-currency unrealized view. Cached per pair so a portfolio of
-            # many EUR positions does one fetch, not N. None falls back to 1.0.
-            if position_currency == base_currency:
-                live_fx = 1.0
-            elif position_currency in _live_fx_cache:
-                live_fx = _live_fx_cache[position_currency]
-            else:
-                try:
-                    live_fx = fx_service.get_or_fetch_fx(conn, position_currency, base_currency) or 1.0
-                except Exception as exc:
-                    logger.warning("positions/prices: FX %s->%s failed: %s",
-                                   position_currency, base_currency, exc)
-                    live_fx = 1.0
-                _live_fx_cache[position_currency] = live_fx
+            # base-currency unrealized view.
+            base_fx = live_fx(position_currency, base_currency)
 
             if current_price is not None:
                 # current_value is the live market value of the units (the cost to
@@ -345,12 +368,15 @@ def get_positions_with_prices(
                 # Base-currency view: market value at today's FX, vs cost basis
                 # converted at each lot's stored FX (already in *_base). Captures
                 # both the price move and the currency move since each lot opened.
-                current_value_base = round(current_value * live_fx, 10)
-                cost_basis_base    = round(g["total_cost_basis_base"], 10)
-                unrealized_pnl_base = round(
-                    (cost_basis_base - current_value_base) if direction == "short"
-                    else (current_value_base - cost_basis_base), 10
-                )
+                if base_fx is not None:
+                    current_value_base = round(current_value * base_fx, 10)
+                    cost_basis_base    = round(g["total_cost_basis_base"], 10)
+                    unrealized_pnl_base = round(
+                        (cost_basis_base - current_value_base) if direction == "short"
+                        else (current_value_base - cost_basis_base), 10
+                    )
+                else:
+                    current_value_base = unrealized_pnl_base = None
             else:
                 current_value = unrealized_pnl = unrealized_pnl_pct = None
                 current_value_base = unrealized_pnl_base = None
@@ -377,7 +403,10 @@ def get_positions_with_prices(
                 "total_cost_basis_base":    round(g["total_cost_basis_base"], 10),
                 "lots":                     g["lots"],
                 "broker_color":             broker_color,
-                "current_price":            current_price,
+                "current_price":            current_price,   # in the position's currency
+                "quote_price":              quote_price,     # as quoted by the source
+                "quote_currency":           quote_currency,
+                "price_error":              price_error,
                 "current_value":            current_value,
                 "unrealized_pnl":           unrealized_pnl,
                 "unrealized_pnl_pct":       unrealized_pnl_pct,

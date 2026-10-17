@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 import stats_cache
+from price_service import normalize_currency
 from common import (
     _base_currency,
     _db,
@@ -135,7 +136,7 @@ def create_event(user_id: int, body: EventCreate):
             row = cur.execute("SELECT currency FROM instruments WHERE id = ?", (body.instrument_id,)).fetchone()
             instr_currency = row[0] if row else None
 
-        currency = ((body.currency or instr_currency or _base_currency(cur)) or "USD").strip().upper()
+        currency = normalize_currency(body.currency or instr_currency or _base_currency(cur)) or "USD"
         fx_rate  = _resolve_fx(conn, cur, currency, body.fx_rate)
         event_date_iso = _dt_to_storage(body.event_date)
 

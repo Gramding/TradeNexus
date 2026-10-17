@@ -139,7 +139,15 @@
     "freq_monthly": "Monthly (12)",
     "maturity": "Maturity",
     "accrued_interest": "Accrued interest at purchase",
-    "accrued_hint": "Bundled into the cash debit, not cost basis."
+    "accrued_hint": "Bundled into the cash debit, not cost basis.",
+    "currency": "Trade currency",
+    "currency_hint": "The currency the price is quoted in.",
+    "fx_rate": "FX rate (1 {from} in {to})",
+    "fx_hint": "Leave blank to fetch the rate automatically.",
+    "fx_cached": "Last known: {rate}",
+    "fx_edit_hint": "Correct this if the trade was saved with a wrong exchange rate.",
+    "currency_invalid": "Trade currency must be a 3-letter code like USD or EUR.",
+    "fx_invalid": "FX rate must be greater than 0."
   },
   "positions": {
     "title": "Positions",
@@ -176,7 +184,8 @@
     "reload_failed": "Failed to reload positions: {error}",
     "cover": "Cover",
     "short": "SHORT",
-    "empty_cta": "Open a position →"
+    "empty_cta": "Open a position →",
+    "price_fx_missing": "No exchange rate for {from} to {to}"
   },
   "sell_form": {
     "title": "Sell {ticker}",

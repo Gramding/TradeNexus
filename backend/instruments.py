@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from db import get_connection
-from price_service import search_instruments, resolve_isin, ISIN_RE
+from price_service import search_instruments, resolve_isin, normalize_currency, ISIN_RE
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["instruments"])
@@ -135,7 +135,8 @@ def upsert_instrument(body: InstrumentBody):
             "ON CONFLICT(symbol) DO UPDATE SET "
             "ticker = excluded.ticker, name = excluded.name, exchange = excluded.exchange, "
             "asset_class = excluded.asset_class, currency = excluded.currency, isin = excluded.isin",
-            (symbol, ticker, body.name, body.exchange, body.asset_class, body.currency, body.isin),
+            (symbol, ticker, body.name, body.exchange, body.asset_class,
+             normalize_currency(body.currency) or "USD", body.isin),
         )
         conn.commit()
         cur.execute(f"SELECT {_INSTRUMENT_COLS} FROM instruments WHERE symbol = ?", (symbol,))

@@ -25,6 +25,7 @@ db.DB_PATH = _TMPDIR / "test.db"
 # run_startup_backup() at import; the temp DB does not exist yet, so it no-ops.
 import init_db  # noqa: E402
 import main  # noqa: E402
+import price_service  # noqa: E402
 import stats_cache  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -38,7 +39,20 @@ def _fresh_db():
     # The stats/growth caches are process-global and outlive the temp DB, so clear
     # them too or a recreated user id could serve another test's cached result.
     stats_cache.invalidate_all()
+    price_service.clear_failure_cache()
     init_db.init()   # schema + migrations + default trade_types / settings / seed user
+
+
+# The real Yahoo fetch, for tests that drive it against a fake yfinance module.
+REAL_YAHOO_FETCH = price_service.YahooFinanceSource.fetch
+
+
+@pytest.fixture(autouse=True)
+def offline_yahoo(monkeypatch):
+    """Keep the suite offline and deterministic: a Yahoo price or FX lookup behaves
+    like a failed fetch unless a test seeds the cache or patches a source itself.
+    Without this, tests silently hit the live API whenever the network is up."""
+    monkeypatch.setattr(price_service.YahooFinanceSource, "fetch", lambda self, symbol: None)
 
 
 @pytest.fixture

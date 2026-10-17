@@ -210,13 +210,16 @@ def _base_currency(cur: sqlite3.Cursor) -> str:
     return ((vals.get("base_currency") or vals.get("currency") or "USD").strip().upper()) or "USD"
 
 
-def _resolve_fx(conn, cur: sqlite3.Cursor, trade_currency: str, override) -> float:
+def _resolve_fx(conn, cur: sqlite3.Cursor, trade_currency: str, override,
+                fallback: Optional[float] = None) -> float:
     """FX rate to convert `trade_currency` into the base currency at trade time.
 
     An explicit override wins (must be > 0); same-currency is 1.0; otherwise the
-    live/cached rate is used. If a cross-currency rate can't be fetched (offline,
-    unknown pair) we fall back to 1.0 and log it, so the trade still records — the
-    user can correct the rate via the override later."""
+    live/cached rate is used. When no fresh rate can be fetched (offline, rate
+    limited) the last cached rate of any age is used, then `fallback` (a sell or
+    cover passes its opening lot's rate). With none of those the request fails
+    with 503 asking for a manual rate. Silently storing 1.0 used to corrupt the
+    cash pool and every base-currency figure for that trade."""
     if override is not None:
         try:
             fx = float(override)
@@ -226,8 +229,9 @@ def _resolve_fx(conn, cur: sqlite3.Cursor, trade_currency: str, override) -> flo
             raise HTTPException(status_code=422, detail="fx_rate must be greater than 0.")
         return round(fx, 10)
 
+    trade_currency = (trade_currency or "").strip().upper()
     base = _base_currency(cur)
-    if (trade_currency or "").upper() == base:
+    if trade_currency == base:
         return 1.0
     try:
         rate = fx_service.get_or_fetch_fx(conn, trade_currency, base)
@@ -235,9 +239,21 @@ def _resolve_fx(conn, cur: sqlite3.Cursor, trade_currency: str, override) -> flo
         logger.warning("FX fetch %s->%s failed: %s", trade_currency, base, exc)
         rate = None
     if rate is None:
-        logger.warning("No FX rate for %s->%s; defaulting to 1.0", trade_currency, base)
-        return 1.0
-    return round(rate, 10)
+        rate = fx_service.get_cached_fx(conn, trade_currency, base)
+        if rate is not None:
+            logger.warning("Live FX %s->%s unavailable; using last cached rate %s",
+                           trade_currency, base, rate)
+    if rate is None and fallback is not None and fallback > 0:
+        logger.warning("Live FX %s->%s unavailable; using the opening lot's rate %s",
+                       trade_currency, base, fallback)
+        rate = fallback
+    if rate is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(f"Could not get an exchange rate for {trade_currency} to {base}. "
+                    f"Enter the FX rate manually and try again."),
+        )
+    return round(float(rate), 10)
 
 
 def _resolve_face_value(trade_type: str, override) -> Optional[float]:

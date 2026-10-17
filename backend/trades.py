@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import stats_cache
+from price_service import normalize_currency
 from common import (
     ACTIONS,
     _base_currency,
@@ -298,7 +299,7 @@ def _create_trade_row(conn, cur: sqlite3.Cursor, user_id: int, body, direction: 
 
     # Native currency: explicit > the instrument's > the base currency. fx_rate
     # converts the native amounts into base; the cash pool is kept in base.
-    trade_currency = ((body.trade_currency or instr_currency or _base_currency(cur)) or "USD").strip().upper()
+    trade_currency = normalize_currency(body.trade_currency or instr_currency or _base_currency(cur)) or "USD"
     fx_rate        = _resolve_fx(conn, cur, trade_currency, body.fx_rate)
 
     commission      = _compute_commission(cur, body.broker_id, body.quantity, body.commission)
@@ -617,7 +618,7 @@ def sell_trade(buy_trade_id: int, body: SellLotCreate):
         buy_fx            = float(trade[21]) if trade[21] is not None else 1.0
         # The sell leg converts at its own rate (FX may have moved since the buy),
         # which captures currency gain/loss in the realized P&L.
-        sell_fx           = _resolve_fx(conn, cur, trade_currency, body.fx_rate)
+        sell_fx           = _resolve_fx(conn, cur, trade_currency, body.fx_rate, fallback=buy_fx)
 
         remaining = float(trade[12]) if trade[12] is not None else original_quantity
         if body.quantity_sold > remaining:
@@ -744,7 +745,7 @@ def cover_trade(short_trade_id: int, body: CoverCreate):
         multiplier        = float(trade[15]) if trade[15] is not None else 1.0
         trade_currency    = trade[20] or "USD"
         open_fx           = float(trade[21]) if trade[21] is not None else 1.0
-        cover_fx          = _resolve_fx(conn, cur, trade_currency, body.fx_rate)
+        cover_fx          = _resolve_fx(conn, cur, trade_currency, body.fx_rate, fallback=open_fx)
 
         remaining = float(trade[12]) if trade[12] is not None else original_quantity
         if body.quantity_covered > remaining:

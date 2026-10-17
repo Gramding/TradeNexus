@@ -90,6 +90,10 @@ const tradeAction       = document.getElementById('trade-action');
 const tradeQuantity     = document.getElementById('trade-quantity');
 const tradePrice        = document.getElementById('trade-price');
 const tradeDate         = document.getElementById('trade-date');
+const tradeCurrencyEl   = document.getElementById('trade-currency');
+const tradeFxField      = document.getElementById('trade-fx-field');
+const tradeFxLabel      = document.getElementById('trade-fx-label');
+const tradeFxRate       = document.getElementById('trade-fx-rate');
 const tradeNotes        = document.getElementById('trade-notes');
 const tradeBrokerEl     = document.getElementById('trade-broker');
 const tradeCommission   = document.getElementById('trade-commission');
@@ -1187,7 +1191,40 @@ async function selectInstrument(result) {
 
   // 6. Confirmation chip.
   renderInstrumentChip(inst);
+
+  // 7. The trade is booked in the instrument's currency unless the user changes it.
+  tradeCurrencyEl.value = inst.currency || '';
+  updateTradeFxField();
 }
+
+// Show the FX field only for a foreign trade currency, labelled with the pair and
+// hinting the last cached rate. Left blank, the server fetches the rate itself
+// (and asks for one if it can't), so a missing rate is never saved as 1.0.
+let fxHintSeq = 0;
+async function updateTradeFxField() {
+  const ccy  = tradeCurrencyEl.value.trim().toUpperCase();
+  const base = reportingCurrency();
+  const foreign = /^[A-Z]{3}$/.test(ccy) && ccy !== base;
+  tradeCurrencyEl.placeholder = base;
+  tradeFxField.classList.toggle('hidden', !foreign);
+  tradeFxRate.placeholder = '';
+  const seq = ++fxHintSeq;
+  if (!foreign) { tradeFxRate.value = ''; return; }
+  tradeFxLabel.textContent = i18n.t('trade_form.fx_rate', { from: ccy, to: base });
+  try {
+    const fx = await apiFetch(`/fx/${encodeURIComponent(ccy)}/${encodeURIComponent(base)}?cache_only=true`);
+    if (seq === fxHintSeq) tradeFxRate.placeholder = i18n.t('trade_form.fx_cached', { rate: fx.rate });
+  } catch (e) {
+    // No cached rate yet: the placeholder stays empty and the server fetches one.
+  }
+}
+
+tradeCurrencyEl.addEventListener('input', () => {
+  const pos = tradeCurrencyEl.selectionStart;
+  tradeCurrencyEl.value = tradeCurrencyEl.value.toUpperCase();
+  tradeCurrencyEl.setSelectionRange(pos, pos);
+  updateTradeFxField();
+});
 
 // Select the trade type matching an asset class, creating it on the fly if the
 // user-fillable list doesn't have it yet (defaults are pre-seeded, so this is a
@@ -1233,7 +1270,11 @@ function renderInstrumentChip(inst) {
 }
 
 function clearInstrumentSelection({ focus = false } = {}) {
+  if (selectedInstrument && tradeCurrencyEl.value === (selectedInstrument.currency || '')) {
+    tradeCurrencyEl.value = '';
+  }
   selectedInstrument = null;
+  updateTradeFxField();
   instrumentIdField.value = '';
   instrumentInput.readOnly = false;
   instrumentInput.classList.remove('has-selection');
@@ -1377,6 +1418,20 @@ addTradeForm.addEventListener('submit', async (e) => {
     broker_id:      tradeBrokerEl.value ? parseInt(tradeBrokerEl.value) : null,
     instrument_id:  selectedInstrument ? selectedInstrument.id : null,
   };
+  // Currency + FX: blank currency lets the server use the instrument's (or the
+  // base); a blank FX rate lets it fetch one.
+  const tradeCcy = tradeCurrencyEl.value.trim().toUpperCase();
+  if (tradeCcy && !/^[A-Z]{3}$/.test(tradeCcy)) {
+    showError(addTradeError, i18n.t('trade_form.currency_invalid'));
+    return;
+  }
+  if (tradeCcy) payload.trade_currency = tradeCcy;
+  if (!tradeFxField.classList.contains('hidden') && tradeFxRate.value !== '') {
+    const fx = parseFloat(tradeFxRate.value);
+    if (!(fx > 0)) { showError(addTradeError, i18n.t('trade_form.fx_invalid')); return; }
+    payload.fx_rate = fx;
+  }
+
   // Only send commission when the user has overridden it; otherwise the backend
   // auto-calculates from the broker.
   if (tradeCommOverride.checked) {
@@ -1458,6 +1513,7 @@ function resetAddTradeForm() {
   clearError(addTradeError);
   hidePriceAutofillHint();
   lastAutofillTicker = '';       // a fresh form may autofill again
+  updateTradeFxField();          // reset() blanked the currency: hide the FX field
 }
 
 btnResetTrade.addEventListener('click', resetAddTradeForm);
@@ -2205,9 +2261,13 @@ function _pnlPctHtml(value) {
 // configured source returned no quote, with a tooltip naming the source so it's
 // clear *why*. The derived value / P&L cells stay a muted dash — they're blank only
 // as a consequence of the missing price.
-function priceUnavailableHtml() {
+function priceUnavailableHtml(p) {
   const src  = SOURCE_LABELS[priceSource()] || priceSource();
-  const hint = i18n.t('positions.price_unavailable_via', { source: src });
+  // A quote that arrived in another currency with no FX rate to convert it.
+  const fxMissing = p && p.quote_price != null && p.quote_currency && p.quote_currency !== p.currency;
+  const hint = fxMissing
+    ? i18n.t('positions.price_fx_missing', { from: p.quote_currency, to: p.currency })
+    : i18n.t('positions.price_unavailable_via', { source: src });
   return `<span class="price-unavail" title="${escHtml(hint)}" aria-label="${escHtml(hint)}">`
     + `<span class="price-unavail-icon" aria-hidden="true">⚠</span>`
     + `<span class="price-unavail-text">${escHtml(i18n.t('positions.price_na_short'))}</span>`
@@ -2471,7 +2531,7 @@ function renderPositionsRows(positions) {
       <td class="num">${formatNumber(p.total_remaining_quantity)}</td>
       <td class="num">${formatCurrencyIn(p.avg_cost_per_unit, p.currency)}</td>
       <td class="num">${formatCurrencyIn(p.total_cost_basis, p.currency)}</td>
-      <td class="num price-col">${p.current_price != null ? _priceHtml(p.current_price, p.currency) : priceUnavailableHtml()}</td>
+      <td class="num price-col">${p.current_price != null ? _priceHtml(p.current_price, p.currency) : priceUnavailableHtml(p)}</td>
       <td class="num price-col">${_priceHtml(p.current_value, p.currency)}</td>
       <td class="num price-col" title="${unrealizedBaseTitle(p)}">${_pnlHtml(p.unrealized_pnl, p.currency)}</td>
       <td class="num price-col">${_pnlPctHtml(p.unrealized_pnl_pct)}</td>
@@ -3721,6 +3781,10 @@ const editBrokerEl     = document.getElementById('edit-broker');
 const editCommission   = document.getElementById('edit-commission');
 const editCommOverride = document.getElementById('edit-commission-override');
 const editCommFormula  = document.getElementById('edit-commission-formula');
+const editFxField      = document.getElementById('edit-fx-field');
+const editFxLabel      = document.getElementById('edit-fx-label');
+const editFxRate       = document.getElementById('edit-fx-rate');
+let editingTradeFx     = null;   // the stored rate, so an unchanged field isn't resent
 
 function updateEditCommission() {
   const broker = getBroker(editBrokerEl.value);
@@ -3740,6 +3804,14 @@ async function openEditTradeModal(trade) {
   editPrice.value    = trade.price_per_unit;
   editDate.value     = toInputDateTime(trade.trade_date);
   editNotes.value    = trade.notes || '';
+  // FX is editable for foreign-currency trades so a rate saved wrongly (older
+  // versions stored 1.0 when the fetch failed) can be corrected.
+  const editBase    = reportingCurrency();
+  const editForeign = !!trade.trade_currency && trade.trade_currency !== editBase;
+  editFxField.classList.toggle('hidden', !editForeign);
+  editFxLabel.textContent = i18n.t('trade_form.fx_rate', { from: trade.trade_currency, to: editBase });
+  editingTradeFx   = editForeign ? Number(trade.fx_rate) : null;
+  editFxRate.value = editForeign ? trade.fx_rate : '';
   clearError(editTradeError);
   const saveBtn = document.getElementById('btn-save-edit-trade');
   saveBtn.disabled    = false;
@@ -3809,13 +3881,20 @@ editTradeForm.addEventListener('submit', async (e) => {
   if (isNaN(price_per_unit) || price_per_unit < 0) { showError(editTradeError, i18n.t('trades.price_nonneg')); return; }
   if (!trade_date)                        { showError(editTradeError, i18n.t('trades.date_required')); return; }
 
+  const editBody = { ticker, trade_type, action, quantity, price_per_unit, trade_date, notes, broker_id, commission };
+  if (!editFxField.classList.contains('hidden')) {
+    const fx = parseFloat(editFxRate.value);
+    if (!(fx > 0)) { showError(editTradeError, i18n.t('trade_form.fx_invalid')); return; }
+    if (fx !== editingTradeFx) editBody.fx_rate = fx;
+  }
+
   const btn = document.getElementById('btn-save-edit-trade');
   btn.disabled    = true;
   btn.textContent = i18n.t('common.saving');
   try {
     await apiFetch(`/trades/${editingTradeId}`, {
       method: 'PUT',
-      body: JSON.stringify({ ticker, trade_type, action, quantity, price_per_unit, trade_date, notes, broker_id, commission }),
+      body: JSON.stringify(editBody),
     });
     closeEditTradeModal();
     showToast(i18n.t('trades.updated'));

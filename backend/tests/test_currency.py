@@ -46,6 +46,7 @@ def test_trade_currency_inherits_instrument_currency(client, user_id):
         "ticker": "BAS", "trade_type": "Stock", "action": "buy",
         "quantity": 10, "price_per_unit": 50, "trade_date": "2026-05-01",
         "instrument_id": inst["id"],  # no trade_currency sent
+        "fx_rate": 1.10,
     }).json()
     assert t["trade_currency"] == "EUR"
 
