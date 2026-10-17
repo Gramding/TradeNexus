@@ -90,7 +90,11 @@
     "quantity_positive": "Quantity must be greater than 0.",
     "price_nonneg": "Price must be ≥ 0.",
     "date_required": "Trade date is required.",
-    "empty_cta": "Add your first trade →"
+    "empty_cta": "Add your first trade →",
+    "undo_title": "Undo this sale or cover",
+    "undo_confirm": "Undo this {ticker} sale or cover? The quantity goes back to the position and its cash and realized P&L are removed.",
+    "undone": "Sale undone.",
+    "delete_confirm_with_closes": "Delete the {ticker} trade and every sale or cover recorded against it? This cannot be undone."
   },
   "trade_form": {
     "instrument": "Instrument",

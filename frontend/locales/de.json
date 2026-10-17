@@ -90,7 +90,11 @@
     "quantity_positive": "Menge muss größer als 0 sein.",
     "price_nonneg": "Preis muss ≥ 0 sein.",
     "date_required": "Handelsdatum ist erforderlich.",
-    "empty_cta": "Ersten Trade hinzufügen →"
+    "empty_cta": "Ersten Trade hinzufügen →",
+    "undo_title": "Verkauf oder Eindeckung rückgängig machen",
+    "undo_confirm": "Diesen {ticker}-Verkauf bzw. diese Eindeckung rückgängig machen? Die Stückzahl geht zurück in die Position, Cash und realisierter G/V werden entfernt.",
+    "undone": "Verkauf rückgängig gemacht.",
+    "delete_confirm_with_closes": "Den {ticker}-Trade und alle darauf gebuchten Verkäufe bzw. Eindeckungen löschen? Das kann nicht rückgängig gemacht werden."
   },
   "trade_form": {
     "instrument": "Instrument",

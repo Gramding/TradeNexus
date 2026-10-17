@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from db import get_connection
+import stats_cache
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["trade-types"])
@@ -160,6 +161,8 @@ def update_trade_type(type_id: int, body: TradeTypeBody):
         cur.execute("UPDATE trades SET trade_type = ? WHERE trade_type = ?", (name, old_name))
         trades_updated = cur.rowcount
         conn.commit()
+        # Stats break volume down by type name, and trade lists filter on it.
+        stats_cache.invalidate_all()
 
         row = _fetch_one(cur, type_id)
     except HTTPException:

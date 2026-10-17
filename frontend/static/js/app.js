@@ -815,24 +815,22 @@ function renderTradesRows(trades, { append }) {
       <td>${badge(t.trade_type)}</td>
       <td><span class="badge badge-${t.action}">${escHtml(i18n.t('trades.actions.' + t.action))}</span></td>
       <td class="num">${formatNumber(t.quantity)}</td>
-      <td class="num">${formatCurrency(t.price_per_unit)}</td>
-      <td class="num">${formatCurrency(t.total_value)}</td>
-      <td class="num">${formatCurrency(t.commission ?? 0)}</td>
-      <td class="num">${t.net_total_value != null ? formatCurrency(t.net_total_value) : '—'}</td>
+      <td class="num">${formatCurrencyIn(t.price_per_unit, t.trade_currency)}</td>
+      <td class="num">${formatCurrencyIn(t.total_value, t.trade_currency)}</td>
+      <td class="num">${formatCurrencyIn(t.commission ?? 0, t.trade_currency)}</td>
+      <td class="num">${t.net_total_value != null ? formatCurrencyIn(t.net_total_value, t.trade_currency) : '—'}</td>
       <td class="notes-cell" title="${escHtml(t.notes ?? '')}">${escHtml(t.notes ?? '—')}</td>
-      <td>
-        <button class="icon-btn edit-btn" title="${escHtml(i18n.t('trades.edit_title'))}" aria-label="${escHtml(i18n.t('trades.edit_title'))}">${icon('edit')}</button>
-        <button class="icon-btn edit-btn dup-btn" title="${escHtml(i18n.t('trades.duplicate_title'))}" aria-label="${escHtml(i18n.t('trades.duplicate_title'))}">${icon('copy')}</button>
-        <button class="icon-btn danger" title="${escHtml(i18n.t('trades.delete_title'))}" aria-label="${escHtml(i18n.t('trades.delete_title'))}">${icon('trash')}</button>
-      </td>
+      <td>${tradeRowActionsHtml(t)}</td>
     `;
     if (t.broker_color) {
       tr.style.setProperty('--broker-color', t.broker_color);
       tr.classList.add('has-broker-color');
     }
-    tr.querySelector('.edit-btn').addEventListener('click', () => openEditTradeModal(t));
-    tr.querySelector('.dup-btn').addEventListener('click', () => duplicateTrade(t));
-    tr.querySelector('button.danger').addEventListener('click', () => deleteTrade(t.id, t.ticker));
+    if (!t.is_close) {
+      tr.querySelector('.edit-btn').addEventListener('click', () => openEditTradeModal(t));
+      tr.querySelector('.dup-btn').addEventListener('click', () => duplicateTrade(t));
+    }
+    tr.querySelector('button.danger').addEventListener('click', () => deleteTrade(t));
     wireTickerLink(tr.querySelector('.ticker-link'), tradeQuoteDesc(t.id));
     tradesTbody.appendChild(tr);
   });
@@ -840,12 +838,29 @@ function renderTradesRows(trades, { append }) {
   consumeSearchHighlight('trade');   // flash a row if search navigated here
 }
 
-async function deleteTrade(id, ticker) {
-  const ok = await confirmDialog(i18n.t('trades.delete_confirm', { ticker }));
+// Row actions. A close row (the sale of a long or the cover of a short) can only be
+// undone: its numbers are booked into the position, realized P&L and cash.
+function tradeRowActionsHtml(t) {
+  const btn = (cls, key, ic) =>
+    `<button class="icon-btn ${cls}" title="${escHtml(i18n.t(key))}" aria-label="${escHtml(i18n.t(key))}">${icon(ic)}</button>`;
+  if (t.is_close) return btn('danger', 'trades.undo_title', 'trash');
+  return btn('edit-btn', 'trades.edit_title', 'edit')
+    + btn('edit-btn dup-btn', 'trades.duplicate_title', 'copy')
+    + btn('danger', 'trades.delete_title', 'trash');
+}
+
+async function deleteTrade(t) {
+  const ticker = (t.ticker || '').toUpperCase();
+  const msg = t.is_close
+    ? i18n.t('trades.undo_confirm', { ticker })
+    : t.status !== 'open'
+      ? i18n.t('trades.delete_confirm_with_closes', { ticker })
+      : i18n.t('trades.delete_confirm', { ticker });
+  const ok = await confirmDialog(msg);
   if (!ok) return;
   try {
-    await apiFetch(`/trades/${id}`, { method: 'DELETE' });
-    showToast(i18n.t('trades.deleted'));
+    await apiFetch(`/trades/${t.id}`, { method: 'DELETE' });
+    showToast(i18n.t(t.is_close ? 'trades.undone' : 'trades.deleted'));
     loadTrades();
   } catch (e) {
     showToast(e.message, true);
@@ -860,10 +875,20 @@ async function duplicateTrade(t) {
   switchTab('add-trade', { skipInit: true });
   await loadBrokerOptions(tradeBrokerEl);
 
-  // Duplicate as a free-text ticker; the user can re-pick from search for a
-  // price lookup if they want to re-link an instrument.
+  // Keep the original's instrument link when it has one (so prices keep
+  // resolving); otherwise duplicate as a free-text ticker.
   clearInstrumentSelection();
-  instrumentInput.value = (t.ticker || '').toUpperCase();
+  if (t.instrument_id && t.symbol) {
+    showSelectedInstrument({
+      id: t.instrument_id, symbol: t.symbol, ticker: t.ticker, name: t.name,
+      exchange: t.exchange, asset_class: t.asset_class, currency: t.currency,
+    });
+  } else {
+    instrumentInput.value = (t.ticker || '').toUpperCase();
+  }
+  // Same currency as the original; the FX rate is fetched fresh for today.
+  tradeCurrencyEl.value = t.trade_currency || '';
+  updateTradeFxField();
   tradeType.value     = t.trade_type;
   tradeAction.value   = t.action;
   tradeQuantity.value = t.quantity;
@@ -1172,13 +1197,7 @@ async function selectInstrument(result) {
     return;
   }
 
-  selectedInstrument = inst;
-  // 2 + 3. Set the hidden id and lock the input to a friendly label.
-  instrumentIdField.value = inst.id;
-  instrumentInput.value = `${inst.ticker} — ${inst.name || inst.ticker}`;
-  instrumentInput.readOnly = true;
-  instrumentInput.classList.add('has-selection');
-  hideInstrumentDropdown();
+  showSelectedInstrument(inst);
 
   // 4. Auto-fill the trade type from the asset class (stock→Stock, crypto→Crypto,
   //    etf→ETF, …), creating the type if the user's list doesn't have it. It stays
@@ -1189,12 +1208,21 @@ async function selectInstrument(result) {
   lastAutofillTicker = '';
   autofillPriceFromCache(inst.symbol, inst.isin);
 
-  // 6. Confirmation chip.
-  renderInstrumentChip(inst);
-
-  // 7. The trade is booked in the instrument's currency unless the user changes it.
+  // 6. The trade is booked in the instrument's currency unless the user changes it.
   tradeCurrencyEl.value = inst.currency || '';
   updateTradeFxField();
+}
+
+// Lock the instrument input to a picked instrument: hidden id, friendly label,
+// confirmation chip. Shared by a fresh pick and by Duplicate.
+function showSelectedInstrument(inst) {
+  selectedInstrument = inst;
+  instrumentIdField.value = inst.id;
+  instrumentInput.value = `${inst.ticker} — ${inst.name || inst.ticker}`;
+  instrumentInput.readOnly = true;
+  instrumentInput.classList.add('has-selection');
+  hideInstrumentDropdown();
+  renderInstrumentChip(inst);
 }
 
 // Show the FX field only for a foreign trade currency, labelled with the pair and
@@ -3872,9 +3900,9 @@ editTradeForm.addEventListener('submit', async (e) => {
   const trade_date     = editDate.value;
   const notes          = editNotes.value.trim() || null;
   const broker_id      = editBrokerEl.value ? parseInt(editBrokerEl.value) : null;
-  // Field is kept in sync with the estimate when not overridden, so its value is
-  // always what should be saved — send it explicitly.
-  const commission     = parseFloat(editCommission.value) || 0;
+  // An overridden commission is sent as typed; otherwise null asks the server to
+  // derive it from the broker (in the trade's currency).
+  const commission     = editCommOverride.checked ? (parseFloat(editCommission.value) || 0) : null;
 
   if (!ticker)                            { showError(editTradeError, i18n.t('trades.ticker_required')); return; }
   if (isNaN(quantity) || quantity <= 0)   { showError(editTradeError, i18n.t('trades.quantity_positive')); return; }

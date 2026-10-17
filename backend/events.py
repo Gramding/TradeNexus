@@ -44,28 +44,62 @@ class EventCreate(BaseModel):
     note: Optional[str] = None
 
 
+# Opening lots of a position: longs (buy/long) and shorts (sell/short).
+_OPEN_LOT_SQL = "((action = 'buy' AND direction = 'long') OR (action = 'sell' AND direction = 'short'))"
+
+
+def _split_factor(cur: sqlite3.Cursor, user_id: int, instrument_id: int, after: str, until=None) -> float:
+    """Product of split ratios recorded for the instrument strictly after `after`
+    (and on or before `until`, when given). Quantities recorded later than a split
+    are in post-split units; dividing by this converts them back."""
+    sql = ("SELECT ratio FROM events WHERE user_id = ? AND instrument_id = ? "
+           "AND event_type = 'split' AND date(event_date) > date(?)")
+    params = [user_id, instrument_id, after]
+    if until is not None:
+        sql += " AND date(event_date) <= date(?)"
+        params.append(until)
+    factor = 1.0
+    for (ratio,) in cur.execute(sql, params).fetchall():
+        factor *= float(ratio)
+    return factor
+
+
 def _shares_held(cur: sqlite3.Cursor, user_id: int, instrument_id: int, on_date: str) -> float:
-    """Long-lot shares of `instrument_id` the user holds on `on_date`. Dividends
-    pay only on open long quantity; shorts and closed lots are excluded."""
-    cur.execute(
-        "SELECT COALESCE(SUM(remaining_quantity), 0) FROM trades "
-        "WHERE user_id = ? AND instrument_id = ? "
-        "AND action = 'buy' AND direction = 'long' "
-        "AND status IN ('open', 'partial') AND date(trade_date) <= date(?)",
+    """Long shares of `instrument_id` the user held on `on_date`, in that date's
+    units. A lot counts if it was bought on or before the date; its quantity is
+    what is still open today plus whatever was sold on or after the date (a sale
+    on the ex-date still collects the dividend). Splits recorded after the date
+    are backed out so a dividend entered late is not inflated by them. Shorts do
+    not receive dividends."""
+    lots = cur.execute(
+        "SELECT id, COALESCE(remaining_quantity, quantity) FROM trades "
+        "WHERE user_id = ? AND instrument_id = ? AND action = 'buy' AND direction = 'long' "
+        "AND date(trade_date) <= date(?)",
         (user_id, instrument_id, on_date),
-    )
-    return float(cur.fetchone()[0] or 0)
+    ).fetchall()
+    if not lots:
+        return 0.0
+    later_splits = _split_factor(cur, user_id, instrument_id, on_date)
+    held = 0.0
+    for lot_id, remaining in lots:
+        held += float(remaining or 0) / later_splits
+        for qty_sold, sell_date in cur.execute(
+            "SELECT quantity_sold, sell_date FROM sell_lots "
+            "WHERE buy_trade_id = ? AND date(sell_date) >= date(?)",
+            (lot_id, on_date),
+        ).fetchall():
+            held += float(qty_sold) / _split_factor(cur, user_id, instrument_id, on_date, sell_date)
+    return round(held, 10)
 
 
 def _apply_split(cur: sqlite3.Cursor, user_id: int, instrument_id: int, ratio: float, on_date: str) -> int:
-    """Scale every open lot of `instrument_id` by `ratio`: quantity and
+    """Scale every open lot of `instrument_id`, long or short: quantity and
     remaining_quantity multiply, price_per_unit divides, total_value invariant
     (q * p * multiplier stays equal). Closed sell_lots are realized history and
     untouched. Returns the number of lots adjusted."""
     cur.execute(
         "SELECT id, quantity, remaining_quantity, price_per_unit FROM trades "
-        "WHERE user_id = ? AND instrument_id = ? "
-        "AND action = 'buy' AND direction = 'long' "
+        f"WHERE user_id = ? AND instrument_id = ? AND {_OPEN_LOT_SQL} "
         "AND status IN ('open', 'partial') AND date(trade_date) <= date(?)",
         (user_id, instrument_id, on_date),
     )
@@ -161,8 +195,8 @@ def create_event(user_id: int, body: EventCreate):
                 gross_native = round(float(body.amount), 10)
             signed_base = round(gross_native * fx_rate * (-1 if body.event_type == "fee" else 1), 10)
             cur.execute(
-                "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id, note) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id, reference_kind, note) "
+                "VALUES (?, ?, ?, ?, 'event', ?)",
                 (user_id, _EVENT_CASH_TYPE[body.event_type], signed_base, event_id, body.note),
             )
 
@@ -225,21 +259,28 @@ def delete_event(event_id: int):
             # Inverting the ratio reverses the in-place adjustment exactly, provided
             # no later lots were opened post-split — those would get an unwanted
             # inverse, so we reject that case rather than corrupt state.
+            # Lots opened after the split, or sales/covers after it, are in post-split
+            # units; inverting the ratio over them would corrupt quantities.
             after = cur.execute(
                 "SELECT COUNT(*) FROM trades WHERE user_id = ? AND instrument_id = ? "
-                "AND action = 'buy' AND direction = 'long' AND date(trade_date) > date(?)",
+                f"AND {_OPEN_LOT_SQL} AND date(trade_date) > date(?)",
+                (user_id, instrument_id, event_date),
+            ).fetchone()[0]
+            after += cur.execute(
+                "SELECT COUNT(*) FROM sell_lots sl JOIN trades t ON sl.buy_trade_id = t.id "
+                "WHERE t.user_id = ? AND t.instrument_id = ? AND date(sl.sell_date) > date(?)",
                 (user_id, instrument_id, event_date),
             ).fetchone()[0]
             if after:
                 raise HTTPException(
                     status_code=409,
-                    detail="Cannot delete a split that has trades dated after it; reverse them first.",
+                    detail="Cannot delete a split that has trades, sales or covers dated after it; reverse them first.",
                 )
             _apply_split(cur, user_id, instrument_id, 1.0 / float(ratio), event_date)
         else:
             cur.execute(
-                "DELETE FROM cash_pool WHERE transaction_type = ? AND reference_id = ?",
-                (_EVENT_CASH_TYPE[event_type], event_id),
+                "DELETE FROM cash_pool WHERE reference_kind = 'event' AND reference_id = ? AND user_id = ?",
+                (event_id, user_id),
             )
 
         cur.execute("DELETE FROM events WHERE id = ?", (event_id,))
