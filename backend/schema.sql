@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS trades (
     coupon_frequency   INTEGER,               -- bonds: payments per year (1, 2, 4, 12)
     maturity_date      TEXT,                  -- bonds: ISO date
     accrued_interest   REAL,                  -- bonds: accrued at purchase, in trade_currency
+    sell_lot_id        INTEGER,               -- close rows (sale / cover) only: the sell_lots row they record
     created_at         TEXT     NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -82,6 +83,7 @@ CREATE TABLE IF NOT EXISTS cash_pool (
     transaction_type TEXT     NOT NULL CHECK (transaction_type IN ('deposit', 'withdrawal', 'sell_proceeds', 'buy_deduction', 'dividend', 'interest', 'fee')),
     amount           REAL     NOT NULL,
     reference_id     INTEGER,
+    reference_kind   TEXT     CHECK (reference_kind IN ('trade', 'sell_lot', 'event')),  -- what reference_id points at
     note             TEXT,
     created_at       TEXT     NOT NULL DEFAULT (datetime('now'))
 );

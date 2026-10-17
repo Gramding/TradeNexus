@@ -90,7 +90,11 @@
     "quantity_positive": "Menge muss größer als 0 sein.",
     "price_nonneg": "Preis muss ≥ 0 sein.",
     "date_required": "Handelsdatum ist erforderlich.",
-    "empty_cta": "Ersten Trade hinzufügen →"
+    "empty_cta": "Ersten Trade hinzufügen →",
+    "undo_title": "Verkauf oder Eindeckung rückgängig machen",
+    "undo_confirm": "Diesen {ticker}-Verkauf bzw. diese Eindeckung rückgängig machen? Die Stückzahl geht zurück in die Position, Cash und realisierter G/V werden entfernt.",
+    "undone": "Verkauf rückgängig gemacht.",
+    "delete_confirm_with_closes": "Den {ticker}-Trade und alle darauf gebuchten Verkäufe bzw. Eindeckungen löschen? Das kann nicht rückgängig gemacht werden."
   },
   "trade_form": {
     "instrument": "Instrument",
@@ -139,7 +143,15 @@
     "freq_monthly": "Monatlich (12)",
     "maturity": "Fälligkeit",
     "accrued_interest": "Stückzinsen beim Kauf",
-    "accrued_hint": "Wird der Cash-Belastung zugeschlagen, nicht den Anschaffungskosten."
+    "accrued_hint": "Wird der Cash-Belastung zugeschlagen, nicht den Anschaffungskosten.",
+    "currency": "Handelswährung",
+    "currency_hint": "Die Währung, in der der Preis notiert.",
+    "fx_rate": "Wechselkurs (1 {from} in {to})",
+    "fx_hint": "Leer lassen, um den Kurs automatisch abzurufen.",
+    "fx_cached": "Zuletzt bekannt: {rate}",
+    "fx_edit_hint": "Korrigieren, falls der Trade mit einem falschen Wechselkurs gespeichert wurde.",
+    "currency_invalid": "Die Handelswährung muss ein dreistelliger Code wie USD oder EUR sein.",
+    "fx_invalid": "Der Wechselkurs muss größer als 0 sein."
   },
   "positions": {
     "title": "Positionen",
@@ -176,7 +188,8 @@
     "reload_failed": "Positionen konnten nicht neu geladen werden: {error}",
     "cover": "Eindecken",
     "short": "SHORT",
-    "empty_cta": "Position eröffnen →"
+    "empty_cta": "Position eröffnen →",
+    "price_fx_missing": "Kein Wechselkurs für {from} nach {to}"
   },
   "sell_form": {
     "title": "{ticker} verkaufen",

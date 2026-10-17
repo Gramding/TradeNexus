@@ -11,7 +11,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import stats_cache
+from price_service import normalize_currency
 from common import (
+    _is_close_row,
     ACTIONS,
     _base_currency,
     _cached_total_count,
@@ -298,10 +300,11 @@ def _create_trade_row(conn, cur: sqlite3.Cursor, user_id: int, body, direction: 
 
     # Native currency: explicit > the instrument's > the base currency. fx_rate
     # converts the native amounts into base; the cash pool is kept in base.
-    trade_currency = ((body.trade_currency or instr_currency or _base_currency(cur)) or "USD").strip().upper()
+    trade_currency = normalize_currency(body.trade_currency or instr_currency or _base_currency(cur)) or "USD"
     fx_rate        = _resolve_fx(conn, cur, trade_currency, body.fx_rate)
 
-    commission      = _compute_commission(cur, body.broker_id, body.quantity, body.commission)
+    commission      = _compute_commission(conn, cur, body.broker_id, body.quantity, body.commission,
+                                          trade_currency, fx_rate)
     net_total_value = _net_total(body.action, total_value, commission)
     # Bonds: the buyer pays accrued interest on top of the clean price; the
     # seller receives it. Bundled into the cash flow so the broker's debit
@@ -334,8 +337,8 @@ def _create_trade_row(conn, cur: sqlite3.Cursor, user_id: int, body, direction: 
         # cash pool matches what the broker actually debits (gross cost + commission
         # + bond accrued interest).
         cur.execute(
-            "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
-            "VALUES (?, 'buy_deduction', ?, ?)",
+            "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id, reference_kind) "
+            "VALUES (?, 'buy_deduction', ?, ?, 'trade')",
             (user_id, -net_total_base, trade_id),
         )
     else:
@@ -343,8 +346,8 @@ def _create_trade_row(conn, cur: sqlite3.Cursor, user_id: int, body, direction: 
         # broker deposits the sale proceeds into the account. The liability to buy
         # the shares back is tracked by the open short lot, not the cash pool.
         cur.execute(
-            "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
-            "VALUES (?, 'sell_proceeds', ?, ?)",
+            "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id, reference_kind) "
+            "VALUES (?, 'sell_proceeds', ?, ?, 'trade')",
             (user_id, net_total_base, trade_id),
         )
 
@@ -410,6 +413,75 @@ def bulk_create_trades(body: BulkTradeCreate):
     return {"created": created, "count": len(created)}
 
 
+def _fields_set(body) -> set:
+    """Fields the client actually sent (an explicit null counts), on pydantic v1 or v2."""
+    fields = getattr(body, "model_fields_set", None)
+    return set(fields if fields is not None else body.__fields_set__)
+
+
+def _norm_stored_dt(value) -> str:
+    """Stored trade dates are 'YYYY-MM-DD HH:MM:SS'; sale and cover rows store a
+    bare 'YYYY-MM-DD'. Normalize so the two compare equal to an edit's value."""
+    v = (value or "").strip()
+    return f"{v} 00:00:00" if len(v) == 10 else v
+
+
+def _differs(new, old, tol: float = 1e-9) -> bool:
+    if new is None:
+        return False
+    if old is None:
+        return True
+    return abs(float(new) - float(old)) > tol
+
+
+def _changed_fields(conn, cur: sqlite3.Cursor, body: "TradeUpdate", existing: tuple) -> set:
+    """Names of the trade fields this edit actually changes. The edit form sends
+    every field, so presence alone says nothing; values are compared instead."""
+    changed = set()
+    if body.ticker is not None and body.ticker.strip().upper() != existing[2]:
+        changed.add("ticker")
+    if body.trade_type is not None and _normalize_trade_type(cur, body.trade_type) != existing[3]:
+        changed.add("trade_type")
+    if body.action is not None and body.action != existing[4]:
+        changed.add("action")
+    if _differs(body.quantity, existing[5]):
+        changed.add("quantity")
+    if _differs(body.price_per_unit, existing[6]):
+        changed.add("price_per_unit")
+    if body.trade_date is not None and _dt_to_storage(body.trade_date) != _norm_stored_dt(existing[8]):
+        changed.add("trade_date")
+    if body.broker_id is not None and body.broker_id != existing[13]:
+        changed.add("broker_id")
+    if "commission" in _fields_set(body):
+        new_commission = body.commission
+        if new_commission is None:   # explicit null = back to the broker's auto commission
+            new_commission = _compute_commission(
+                conn, cur, body.broker_id if body.broker_id is not None else existing[13],
+                body.quantity if body.quantity is not None else float(existing[5]),
+                None, existing[20], body.fx_rate or existing[21],
+            )
+        if _differs(new_commission, existing[14], tol=0.005):
+            changed.add("commission")
+    if _differs(body.multiplier, existing[15]):
+        changed.add("multiplier")
+    if _differs(body.strike_price, existing[16]):
+        changed.add("strike_price")
+    if body.expiration_date is not None and body.expiration_date.isoformat() != existing[17]:
+        changed.add("expiration_date")
+    if body.underlying is not None and body.underlying.strip().upper() != (existing[18] or ""):
+        changed.add("underlying")
+    if _differs(body.fx_rate, existing[21]):
+        changed.add("fx_rate")
+    if _differs(body.accrued_interest, existing[22]):
+        changed.add("accrued_interest")
+    return changed
+
+
+# Fields that can change on a position that already has sales or covers against
+# it. Everything else feeds the realized P&L already booked on those closes.
+_EDITABLE_WITH_CLOSES = {"trade_date", "strike_price", "expiration_date", "underlying"}
+
+
 @router.put("/trades/{trade_id}")
 def update_trade(trade_id: int, body: TradeUpdate):
     if body.action is not None and body.action not in ACTIONS:
@@ -422,101 +494,145 @@ def update_trade(trade_id: int, body: TradeUpdate):
         raise HTTPException(status_code=422, detail="commission must be >= 0.")
     if body.strike_price is not None and body.strike_price < 0:
         raise HTTPException(status_code=422, detail="strike_price must be >= 0.")
+    if body.ticker is not None and not body.ticker.strip():
+        raise HTTPException(status_code=422, detail="Ticker cannot be empty.")
+    if body.accrued_interest is not None and body.accrued_interest < 0:
+        raise HTTPException(status_code=422, detail="accrued_interest must be >= 0.")
 
     conn = _db()
     try:
         cur = conn.cursor()
         existing = _require_trade(cur, trade_id)
-
+        user_id   = existing[1]
+        direction = existing[19] or "long"
         if body.broker_id is not None:
             _require_broker(cur, body.broker_id)
 
-        ticker         = body.ticker                        if body.ticker         is not None else existing[2]
+        changed = _changed_fields(conn, cur, body, existing)
+        if "action" in changed:
+            raise HTTPException(
+                status_code=422,
+                detail="A trade can't be switched between buy and sell. Delete it and add it again.",
+            )
+
+        # A sale or cover row: its numbers are booked into a sell lot, the opening
+        # position and the cash pool, so only the note can change here.
+        if _is_close_row(existing[4], direction):
+            if changed:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This row records a sale or cover and can't be edited. "
+                           "Delete it to undo the sale, then record it again.",
+                )
+            if body.notes is not None:
+                cur.execute("UPDATE trades SET notes = ? WHERE id = ?", (body.notes, trade_id))
+                if existing[23] is not None:
+                    cur.execute("UPDATE sell_lots SET notes = ? WHERE id = ?", (body.notes, existing[23]))
+            conn.commit()
+            stats_cache.invalidate(user_id)
+            row = cur.execute(_TRADE_SELECT + " WHERE t.id = ?", (trade_id,)).fetchone()
+            return _row_to_trade(row)
+
+        close_count = cur.execute(
+            "SELECT COUNT(*) FROM sell_lots WHERE buy_trade_id = ?", (trade_id,)
+        ).fetchone()[0]
+        locked = changed - _EDITABLE_WITH_CLOSES
+        if close_count and locked:
+            raise HTTPException(
+                status_code=409,
+                detail=f"This position has {close_count} sale(s) or cover(s) recorded against it. "
+                       f"Delete those first to change: {', '.join(sorted(locked))}.",
+            )
+
+        ticker         = body.ticker.strip().upper() if body.ticker is not None else existing[2]
         trade_type     = _normalize_trade_type(cur, body.trade_type) if body.trade_type is not None else existing[3]
-        action         = body.action                        if body.action         is not None else existing[4]
-        quantity       = body.quantity                      if body.quantity       is not None else float(existing[5])
+        action         = existing[4]
+        old_quantity   = float(existing[5])
+        quantity       = body.quantity                      if body.quantity       is not None else old_quantity
         price_per_unit = body.price_per_unit                if body.price_per_unit is not None else float(existing[6])
         trade_date     = _dt_to_storage(body.trade_date)    if body.trade_date     is not None else existing[8]
         notes          = body.notes                         if body.notes          is not None else existing[9]
         broker_id      = body.broker_id                     if body.broker_id      is not None else existing[13]
+        trade_currency = existing[20] or "USD"
+        accrued        = (round(float(body.accrued_interest), 10) if body.accrued_interest is not None
+                          else float(existing[22] or 0))
+
+        # Open quantity follows the edit: with no closes recorded, remaining moves
+        # by the same amount as quantity (splits scale both together).
+        remaining = round(float(existing[12] if existing[12] is not None else old_quantity)
+                          + (quantity - old_quantity), 10)
 
         # Multiplier: explicit override wins; else re-resolve when the trade_type
         # changed (so switching to/from Call/Put updates the 100x); otherwise keep
         # the stored multiplier. total_value always reflects the current multiplier.
         existing_multiplier  = float(existing[15]) if existing[15] is not None else 1.0
-        existing_strike      = existing[16]
-        existing_expiration  = existing[17]
-        existing_underlying  = existing[18]
         if body.multiplier is not None:
             multiplier = _resolve_multiplier(trade_type, body.multiplier)
-        elif body.trade_type is not None:
+        elif "trade_type" in changed:
             multiplier = _resolve_multiplier(trade_type, None)
         else:
             multiplier = existing_multiplier
         total_value    = round(quantity * price_per_unit * multiplier, 10)
 
-        # Commission: explicit override wins; else recompute when broker or quantity
-        # changed; otherwise keep the existing value untouched.
+        # FX: an explicit override wins; otherwise keep the trade's stored rate.
+        existing_fx     = float(existing[21]) if existing[21] is not None else 1.0
+        fx_rate         = _resolve_fx(conn, cur, trade_currency, body.fx_rate) if body.fx_rate is not None else existing_fx
+
+        # Commission: an explicit value wins; an explicit null (or a changed broker
+        # or quantity) re-derives the broker's commission; otherwise keep it.
         if body.commission is not None:
             commission = round(float(body.commission), 10)
-        elif body.broker_id is not None or body.quantity is not None:
-            commission = _compute_commission(cur, broker_id, quantity, None)
+        elif "commission" in _fields_set(body) or "broker_id" in changed or "quantity" in changed:
+            commission = _compute_commission(conn, cur, broker_id, quantity, None, trade_currency, fx_rate)
         else:
             commission = float(existing[14] or 0)
         net_total_value = _net_total(action, total_value, commission)
+        # Same cash rule as on create: bond accrued interest rides on the cash leg.
+        cash_native     = net_total_value + (accrued if action == "buy" else -accrued)
+        net_total_base  = round(cash_native * fx_rate, 10)
 
-        # FX: an explicit override wins; otherwise keep the trade's stored rate.
-        # trade_currency is not edited here. net_total_base drives the cash pool.
-        existing_fx     = float(existing[21]) if existing[21] is not None else 1.0
-        fx_rate         = _resolve_fx(conn, cur, existing[20] or "USD", body.fx_rate) if body.fx_rate is not None else existing_fx
-        net_total_base  = round(net_total_value * fx_rate, 10)
-
-        # Option metadata: each field is replaced only when supplied, else preserved.
-        strike_price    = body.strike_price                          if body.strike_price    is not None else existing_strike
+        strike_price    = body.strike_price if body.strike_price is not None else existing[16]
         expiration_date = (body.expiration_date.isoformat()
-                           if body.expiration_date is not None else existing_expiration)
+                           if body.expiration_date is not None else existing[17])
         underlying      = (body.underlying.strip().upper()
-                           if body.underlying else existing_underlying)
+                           if body.underlying else existing[18])
 
         cur.execute(
-            "UPDATE trades SET ticker=?, trade_type=?, action=?, quantity=?, "
+            "UPDATE trades SET ticker=?, trade_type=?, quantity=?, remaining_quantity=?, "
             "price_per_unit=?, total_value=?, trade_date=?, notes=?, broker_id=?, "
             "commission=?, net_total_value=?, multiplier=?, strike_price=?, "
-            "expiration_date=?, underlying=?, fx_rate=? WHERE id=?",
-            (ticker, trade_type, action, quantity, price_per_unit, total_value, trade_date, notes, broker_id,
-             commission, net_total_value, multiplier, strike_price, expiration_date, underlying, fx_rate, trade_id),
+            "expiration_date=?, underlying=?, fx_rate=?, accrued_interest=? WHERE id=?",
+            (ticker, trade_type, quantity, remaining, price_per_unit, total_value, trade_date,
+             notes, broker_id, commission, net_total_value, multiplier, strike_price,
+             expiration_date, underlying, fx_rate, accrued, trade_id),
         )
 
-        # Keep the cash pool in sync with the edit. An opening trade has exactly one
-        # cash row keyed by its trade_id: a long open's buy_deduction (negative) or a
-        # short open's sell_proceeds (positive). Drop and re-insert that one row for
-        # the new net total. Close-side cash rows are keyed by sell-lot id and left
-        # untouched. The row type follows the trade's direction (not editable here),
-        # so the delete stays scoped to this trade's own open-side row.
-        direction = existing[19] or "long"
-        open_cash_type = "sell_proceeds" if direction == "short" else "buy_deduction"
+        # Re-post this opening trade's own cash row (a long's debit or a short's
+        # credit) for the new totals. Scoped by kind and user so it can never touch
+        # another row that happens to share the same reference id.
         cur.execute(
-            "DELETE FROM cash_pool WHERE transaction_type = ? AND reference_id = ?",
-            (open_cash_type, trade_id),
+            "DELETE FROM cash_pool WHERE reference_kind = 'trade' AND reference_id = ? AND user_id = ?",
+            (trade_id, user_id),
         )
         if direction == "short":
             cur.execute(
-                "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
-                "VALUES (?, 'sell_proceeds', ?, ?)",
-                (existing[1], net_total_base, trade_id),
+                "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id, reference_kind) "
+                "VALUES (?, 'sell_proceeds', ?, ?, 'trade')",
+                (user_id, net_total_base, trade_id),
             )
         else:
             cur.execute(
-                "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
-                "VALUES (?, 'buy_deduction', ?, ?)",
-                (existing[1], -net_total_base, trade_id),
+                "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id, reference_kind) "
+                "VALUES (?, 'buy_deduction', ?, ?, 'trade')",
+                (user_id, -net_total_base, trade_id),
             )
 
         conn.commit()
-        stats_cache.invalidate(existing[1])
+        stats_cache.invalidate(user_id)
         cur.execute(_TRADE_SELECT + " WHERE t.id = ?", (trade_id,))
         row = cur.fetchone()
     except HTTPException:
+        conn.rollback()
         raise
     except sqlite3.Error as exc:
         conn.rollback()
@@ -528,47 +644,60 @@ def update_trade(trade_id: int, body: TradeUpdate):
     return _row_to_trade(row)
 
 
+def _unlinked_close_has_lot(cur: sqlite3.Cursor, close_row: tuple) -> bool:
+    """For a close row with no sell_lot_id (recorded before the link existed and
+    not matched by the migration): is there still a sell lot it could belong to?
+    If not, the row is an orphan left behind by an earlier delete."""
+    lot_dir = "long" if close_row[4] == "sell" else "short"
+    return cur.execute(
+        "SELECT 1 FROM sell_lots sl JOIN trades t ON sl.buy_trade_id = t.id "
+        "WHERE t.user_id = ? AND COALESCE(t.direction, 'long') = ? "
+        "AND ABS(sl.quantity_sold - ?) < 1e-9 AND ABS(sl.sell_price_per_unit - ?) < 1e-9 "
+        "AND date(sl.sell_date) = date(?) "
+        "AND NOT EXISTS (SELECT 1 FROM trades c WHERE c.sell_lot_id = sl.id) LIMIT 1",
+        (close_row[1], lot_dir, close_row[5], close_row[6], close_row[8]),
+    ).fetchone() is not None
+
+
 @router.delete("/trades/{trade_id}")
 def delete_trade(trade_id: int):
+    """Delete an opening trade together with everything recorded against it, or
+    undo a single sale / cover (delete its close row) and give the quantity back
+    to the position."""
     conn = _db()
     try:
         cur = conn.cursor()
         existing = _require_trade(cur, trade_id)
-
-        # Remove dependent rows before the trade itself, so the sell_lots -> trades
-        # foreign key doesn't block the delete, and reverse this trade's cash-pool
-        # effects so the balance stays correct. This handles both long opens (closed
-        # by sells) and short opens (closed by covers): the close ledger lives in
-        # sell_lots keyed by this opening trade's id either way.
-        sell_lot_ids = [
-            r[0] for r in cur.execute(
-                "SELECT id FROM sell_lots WHERE buy_trade_id = ?", (trade_id,)
-            ).fetchall()
-        ]
-        if sell_lot_ids:
-            placeholders = ",".join("?" * len(sell_lot_ids))
-            # Close-side cash rows reference the sell_lot id: sell_proceeds when a
-            # long was sold, buy_deduction when a short was covered.
-            cur.execute(
-                f"DELETE FROM cash_pool WHERE reference_id IN ({placeholders}) "
-                f"AND transaction_type IN ('sell_proceeds', 'buy_deduction')",
-                sell_lot_ids,
-            )
-            cur.execute("DELETE FROM sell_lots WHERE buy_trade_id = ?", (trade_id,))
-
-        # The opening trade's own cash row references the trade id: a long open's
-        # buy_deduction or a short open's sell_proceeds.
+        user_id   = existing[1]
         direction = existing[19] or "long"
-        open_cash_type = "sell_proceeds" if direction == "short" else "buy_deduction"
-        cur.execute(
-            "DELETE FROM cash_pool WHERE transaction_type = ? AND reference_id = ?",
-            (open_cash_type, trade_id),
-        )
 
-        cur.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+        if _is_close_row(existing[4], direction):
+            _undo_close(cur, existing)
+        else:
+            # Everything closed against this position: the sell lots, their close
+            # rows and their cash rows. Then the opening trade and its own cash row.
+            lot_ids = [r[0] for r in cur.execute(
+                "SELECT id FROM sell_lots WHERE buy_trade_id = ?", (trade_id,)
+            ).fetchall()]
+            if lot_ids:
+                marks = ",".join("?" * len(lot_ids))
+                cur.execute(
+                    f"DELETE FROM cash_pool WHERE reference_kind = 'sell_lot' "
+                    f"AND reference_id IN ({marks}) AND user_id = ?",
+                    lot_ids + [user_id],
+                )
+                cur.execute(f"DELETE FROM trades WHERE sell_lot_id IN ({marks})", lot_ids)
+                cur.execute("DELETE FROM sell_lots WHERE buy_trade_id = ?", (trade_id,))
+            cur.execute(
+                "DELETE FROM cash_pool WHERE reference_kind = 'trade' AND reference_id = ? AND user_id = ?",
+                (trade_id, user_id),
+            )
+            cur.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+
         conn.commit()
-        stats_cache.invalidate(existing[1])
+        stats_cache.invalidate(user_id)
     except HTTPException:
+        conn.rollback()
         raise
     except sqlite3.Error as exc:
         conn.rollback()
@@ -578,6 +707,58 @@ def delete_trade(trade_id: int):
         conn.close()
 
     return {"detail": f"Trade {trade_id} deleted."}
+
+
+def _undo_close(cur: sqlite3.Cursor, close_row: tuple) -> None:
+    """Reverse one sale or cover: drop its sell lot, close row and cash row, and
+    return the quantity to the opening position."""
+    trade_id, user_id = close_row[0], close_row[1]
+    lot_id = close_row[23]
+    lot = None
+    if lot_id is not None:
+        lot = cur.execute(
+            "SELECT buy_trade_id, quantity_sold, sell_date FROM sell_lots WHERE id = ?", (lot_id,)
+        ).fetchone()
+    elif _unlinked_close_has_lot(cur, close_row):
+        raise HTTPException(
+            status_code=409,
+            detail="This sale was recorded by an older version and isn't linked to its position, "
+                   "so it can't be undone on its own. Delete the opening trade instead.",
+        )
+
+    if lot is None:
+        # Orphan close row (its sell lot is already gone): just remove it.
+        cur.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+        return
+
+    buy_trade_id, quantity_sold, sell_date = lot
+    opening = _require_trade(cur, buy_trade_id)
+    instrument_id = opening[24]
+    if instrument_id is not None:
+        later_split = cur.execute(
+            "SELECT 1 FROM events WHERE user_id = ? AND instrument_id = ? AND event_type = 'split' "
+            "AND date(event_date) > date(?) LIMIT 1",
+            (user_id, instrument_id, sell_date),
+        ).fetchone()
+        if later_split:
+            raise HTTPException(
+                status_code=409,
+                detail="A stock split was recorded after this sale. Delete the split first, then undo the sale.",
+            )
+
+    original_qty = float(opening[5])
+    remaining = round(float(opening[12] or 0) + float(quantity_sold), 10)
+    status = "open" if abs(remaining - original_qty) < 1e-9 else "partial"
+    cur.execute(
+        "UPDATE trades SET remaining_quantity = ?, status = ? WHERE id = ?",
+        (remaining, status, buy_trade_id),
+    )
+    cur.execute(
+        "DELETE FROM cash_pool WHERE reference_kind = 'sell_lot' AND reference_id = ? AND user_id = ?",
+        (lot_id, user_id),
+    )
+    cur.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+    cur.execute("DELETE FROM sell_lots WHERE id = ?", (lot_id,))
 
 
 # ---------------------------------------------------------------------------
@@ -603,8 +784,8 @@ def sell_trade(buy_trade_id: int, body: SellLotCreate):
         #          5=quantity,6=price_per_unit,7=total_value,8=trade_date,
         #          9=notes,10=created_at,11=status,12=remaining_quantity,
         #          13=broker_id,14=commission
-        if trade[4] != "buy":
-            raise HTTPException(status_code=400, detail="Trade is not a buy trade.")
+        if not (trade[4] == "buy" and (trade[19] or "long") == "long"):
+            raise HTTPException(status_code=400, detail="Trade is not an open long position.")
 
         original_quantity = float(trade[5])
         buy_price         = float(trade[6])
@@ -617,7 +798,7 @@ def sell_trade(buy_trade_id: int, body: SellLotCreate):
         buy_fx            = float(trade[21]) if trade[21] is not None else 1.0
         # The sell leg converts at its own rate (FX may have moved since the buy),
         # which captures currency gain/loss in the realized P&L.
-        sell_fx           = _resolve_fx(conn, cur, trade_currency, body.fx_rate)
+        sell_fx           = _resolve_fx(conn, cur, trade_currency, body.fx_rate, fallback=buy_fx)
 
         remaining = float(trade[12]) if trade[12] is not None else original_quantity
         if body.quantity_sold > remaining:
@@ -634,7 +815,8 @@ def sell_trade(buy_trade_id: int, body: SellLotCreate):
         #    realized_pnl is stored in BASE currency: each leg converts at its own
         #    fx_rate, so a foreign position's currency move is part of the result.
         proceeds        = round(body.quantity_sold * body.sell_price_per_unit * multiplier, 10)
-        sell_commission = _compute_commission(cur, buy_broker_id, body.quantity_sold, body.commission)
+        sell_commission = _compute_commission(conn, cur, buy_broker_id, body.quantity_sold, body.commission,
+                                              trade_currency, sell_fx)
         prop_buy_commission = round(
             (body.quantity_sold / original_quantity) * buy_commission, 10
         ) if original_quantity else 0.0
@@ -673,21 +855,21 @@ def sell_trade(buy_trade_id: int, body: SellLotCreate):
             "INSERT INTO trades "
             "(user_id, broker_id, ticker, trade_type, action, quantity, price_per_unit, "
             "total_value, trade_date, notes, status, remaining_quantity, commission, net_total_value, "
-            "multiplier, trade_currency, fx_rate) "
-            "VALUES (?, ?, ?, ?, 'sell', ?, ?, ?, ?, ?, 'closed', 0, ?, ?, ?, ?, ?)",
+            "multiplier, trade_currency, fx_rate, instrument_id, sell_lot_id) "
+            "VALUES (?, ?, ?, ?, 'sell', ?, ?, ?, ?, ?, 'closed', 0, ?, ?, ?, ?, ?, ?, ?)",
             (
                 trade[1], trade[13], trade[2], trade[3],
                 body.quantity_sold, body.sell_price_per_unit, proceeds,
                 body.sell_date.isoformat(), body.notes, sell_commission, sell_net_total,
-                multiplier, trade_currency, sell_fx,
+                multiplier, trade_currency, sell_fx, trade[24], sell_lot_id,
             ),
         )
 
         # 7. Insert cash_pool row in base currency: credit the proceeds net of the
         #    sell commission, converted at the sell-leg fx rate.
         cur.execute(
-            "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
-            "VALUES (?, 'sell_proceeds', ?, ?)",
+            "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id, reference_kind) "
+            "VALUES (?, 'sell_proceeds', ?, ?, 'sell_lot')",
             (trade[1], round(sell_net_total * sell_fx, 10), sell_lot_id),
         )
 
@@ -744,7 +926,7 @@ def cover_trade(short_trade_id: int, body: CoverCreate):
         multiplier        = float(trade[15]) if trade[15] is not None else 1.0
         trade_currency    = trade[20] or "USD"
         open_fx           = float(trade[21]) if trade[21] is not None else 1.0
-        cover_fx          = _resolve_fx(conn, cur, trade_currency, body.fx_rate)
+        cover_fx          = _resolve_fx(conn, cur, trade_currency, body.fx_rate, fallback=open_fx)
 
         remaining = float(trade[12]) if trade[12] is not None else original_quantity
         if body.quantity_covered > remaining:
@@ -758,7 +940,8 @@ def cover_trade(short_trade_id: int, body: CoverCreate):
         # realized_pnl is in BASE currency: the open leg converts at the short's
         # stored fx, the cover leg at its own.
         cover_cost      = round(body.quantity_covered * body.cover_price_per_unit * multiplier, 10)
-        cover_commission = _compute_commission(cur, short_broker_id, body.quantity_covered, body.commission)
+        cover_commission = _compute_commission(conn, cur, short_broker_id, body.quantity_covered,
+                                               body.commission, trade_currency, cover_fx)
         prop_open_commission = round(
             (body.quantity_covered / original_quantity) * open_commission, 10
         ) if original_quantity else 0.0
@@ -797,21 +980,21 @@ def cover_trade(short_trade_id: int, body: CoverCreate):
             "INSERT INTO trades "
             "(user_id, broker_id, ticker, trade_type, action, quantity, price_per_unit, "
             "total_value, trade_date, notes, status, remaining_quantity, commission, net_total_value, "
-            "multiplier, direction, trade_currency, fx_rate) "
-            "VALUES (?, ?, ?, ?, 'buy', ?, ?, ?, ?, ?, 'closed', 0, ?, ?, ?, 'short', ?, ?)",
+            "multiplier, direction, trade_currency, fx_rate, instrument_id, sell_lot_id) "
+            "VALUES (?, ?, ?, ?, 'buy', ?, ?, ?, ?, ?, 'closed', 0, ?, ?, ?, 'short', ?, ?, ?, ?)",
             (
                 trade[1], trade[13], trade[2], trade[3],
                 body.quantity_covered, body.cover_price_per_unit, cover_cost,
                 body.cover_date.isoformat(), body.notes, cover_commission, cover_net_total,
-                multiplier, trade_currency, cover_fx,
+                multiplier, trade_currency, cover_fx, trade[24], cover_lot_id,
             ),
         )
 
         # Debit the buy-back cost (net of commission) from the cash pool in base
         # currency, keyed to the cover lot id (mirrors how a long sell credits it).
         cur.execute(
-            "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id) "
-            "VALUES (?, 'buy_deduction', ?, ?)",
+            "INSERT INTO cash_pool (user_id, transaction_type, amount, reference_id, reference_kind) "
+            "VALUES (?, 'buy_deduction', ?, ?, 'sell_lot')",
             (trade[1], round(-cover_net_total * cover_fx, 10), cover_lot_id),
         )
 

@@ -152,7 +152,7 @@ def test_positions_prices_onvista_fetches_by_isin(client, user_id, mock_onvista)
         "asset_class": "stock", "currency": "EUR", "isin": "DE000BASF111",
     }).json()
     make_trade(client, user_id, ticker="BAS", instrument_id=inst["id"],
-               trade_currency="EUR", price_per_unit=40)
+               trade_currency="EUR", fx_rate=1.10, price_per_unit=40)
 
     r = client.get(f"/users/{user_id}/positions/prices", params={"source": "onvista"})
     assert r.status_code == 200, r.text
@@ -172,7 +172,7 @@ def test_positions_prices_onvista_recovers_isin_from_symbol(client, user_id, moc
         "asset_class": "stock", "currency": "EUR",  # no isin field
     }).json()
     make_trade(client, user_id, ticker="DE000BASF111", instrument_id=inst["id"],
-               trade_currency="EUR", price_per_unit=40)
+               trade_currency="EUR", fx_rate=1.10, price_per_unit=40)
 
     r = client.get(f"/users/{user_id}/positions/prices", params={"source": "onvista"})
     assert r.status_code == 200, r.text

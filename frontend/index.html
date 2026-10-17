@@ -205,6 +205,22 @@
               </div>
             </div>
 
+            <!-- Trade currency + FX rate to the base currency. The currency defaults
+                 to the picked instrument's; the FX field only shows for a foreign
+                 currency and may be left blank to fetch the rate automatically. -->
+            <div class="field-group">
+              <div class="field">
+                <label for="trade-currency" data-i18n="trade_form.currency">Trade currency</label>
+                <input id="trade-currency" type="text" maxlength="3" autocomplete="off" spellcheck="false" />
+                <p class="field-hint" data-i18n="trade_form.currency_hint">The currency the price is quoted in.</p>
+              </div>
+              <div class="field hidden" id="trade-fx-field">
+                <label for="trade-fx-rate" id="trade-fx-label">FX rate</label>
+                <input id="trade-fx-rate" type="number" min="0" step="any" />
+                <p class="field-hint" data-i18n="trade_form.fx_hint">Leave blank to fetch the rate automatically.</p>
+              </div>
+            </div>
+
             <!-- Option / contract details: shown only for multiplier-bearing types
                  (Call/Put), or whenever a non-1 multiplier is in play. -->
             <div id="contract-fields" class="field-group hidden">
@@ -743,6 +759,11 @@
                 <option value="" data-i18n="common.none">— None —</option>
               </select>
             </div>
+          </div>
+          <div class="field hidden" id="edit-fx-field">
+            <label for="edit-fx-rate" id="edit-fx-label">FX rate</label>
+            <input id="edit-fx-rate" type="number" min="0" step="any" />
+            <p class="field-hint" data-i18n="trade_form.fx_edit_hint">Correct this if the trade was saved with a wrong exchange rate.</p>
           </div>
           <div class="field commission-field">
             <div class="commission-label-row">

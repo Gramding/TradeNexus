@@ -13,6 +13,8 @@ import threading
 _lock = threading.Lock()
 _stats: dict[int, dict] = {}
 _growth: dict[int, list] = {}
+# Trades-list total_count per filter tuple; element 0 of the key is the user id.
+_counts: dict[tuple, int] = {}
 
 
 def get_stats(user_id: int):
@@ -35,11 +37,23 @@ def set_growth(user_id: int, value: list) -> None:
         _growth[user_id] = value
 
 
+def get_count(key: tuple):
+    with _lock:
+        return _counts.get(key)
+
+
+def set_count(key: tuple, value: int) -> None:
+    with _lock:
+        _counts[key] = value
+
+
 def invalidate(user_id: int) -> None:
-    """Drop cached stats + growth for one user after a write."""
+    """Drop cached stats, growth and trade counts for one user after a write."""
     with _lock:
         _stats.pop(user_id, None)
         _growth.pop(user_id, None)
+        for key in [k for k in _counts if k[0] == user_id]:
+            del _counts[key]
 
 
 def invalidate_all() -> None:
@@ -47,3 +61,4 @@ def invalidate_all() -> None:
     with _lock:
         _stats.clear()
         _growth.clear()
+        _counts.clear()

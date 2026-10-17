@@ -90,7 +90,11 @@
     "quantity_positive": "Quantity must be greater than 0.",
     "price_nonneg": "Price must be ≥ 0.",
     "date_required": "Trade date is required.",
-    "empty_cta": "Add your first trade →"
+    "empty_cta": "Add your first trade →",
+    "undo_title": "Undo this sale or cover",
+    "undo_confirm": "Undo this {ticker} sale or cover? The quantity goes back to the position and its cash and realized P&L are removed.",
+    "undone": "Sale undone.",
+    "delete_confirm_with_closes": "Delete the {ticker} trade and every sale or cover recorded against it? This cannot be undone."
   },
   "trade_form": {
     "instrument": "Instrument",
@@ -139,7 +143,15 @@
     "freq_monthly": "Monthly (12)",
     "maturity": "Maturity",
     "accrued_interest": "Accrued interest at purchase",
-    "accrued_hint": "Bundled into the cash debit, not cost basis."
+    "accrued_hint": "Bundled into the cash debit, not cost basis.",
+    "currency": "Trade currency",
+    "currency_hint": "The currency the price is quoted in.",
+    "fx_rate": "FX rate (1 {from} in {to})",
+    "fx_hint": "Leave blank to fetch the rate automatically.",
+    "fx_cached": "Last known: {rate}",
+    "fx_edit_hint": "Correct this if the trade was saved with a wrong exchange rate.",
+    "currency_invalid": "Trade currency must be a 3-letter code like USD or EUR.",
+    "fx_invalid": "FX rate must be greater than 0."
   },
   "positions": {
     "title": "Positions",
@@ -176,7 +188,8 @@
     "reload_failed": "Failed to reload positions: {error}",
     "cover": "Cover",
     "short": "SHORT",
-    "empty_cta": "Open a position →"
+    "empty_cta": "Open a position →",
+    "price_fx_missing": "No exchange rate for {from} to {to}"
   },
   "sell_form": {
     "title": "Sell {ticker}",

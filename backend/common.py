@@ -4,18 +4,25 @@ import datetime
 import json
 import logging
 import sqlite3
-import time
 from typing import Optional
 
 from fastapi import HTTPException
 
 from db import get_connection
 import fx_service
+import stats_cache
+from price_service import normalize_currency
 
 logger = logging.getLogger(__name__)
 
 ACTIONS = {"buy", "sell"}
 DIRECTIONS = {"long", "short"}
+
+
+def _is_close_row(action: str, direction: str) -> bool:
+    """True for the trade rows a sale (sell of a long) or a cover (buy of a short)
+    creates. Opening rows are buy/long and sell/short."""
+    return (action == "sell" and direction == "long") or (action == "buy" and direction == "short")
 
 
 def _normalize_trade_type(cur: sqlite3.Cursor, value: str) -> str:
@@ -80,7 +87,8 @@ _TRADE_SELECT = (
     "i.symbol, i.name, i.exchange, i.asset_class, i.currency, "
     "t.multiplier, t.strike_price, t.expiration_date, t.underlying, t.direction, "
     "t.trade_currency, t.fx_rate, "
-    "t.face_value, t.coupon_rate, t.coupon_frequency, t.maturity_date, t.accrued_interest "
+    "t.face_value, t.coupon_rate, t.coupon_frequency, t.maturity_date, t.accrued_interest, "
+    "t.instrument_id, t.sell_lot_id "
     "FROM trades t LEFT JOIN brokers b ON t.broker_id = b.id "
     "LEFT JOIN instruments i ON t.instrument_id = i.id"
 )
@@ -94,12 +102,6 @@ _TRADE_SORT_COLUMNS = {
     "price_per_unit": "t.price_per_unit",
     "quantity":       "t.quantity",
 }
-
-# In-memory cache of total_count per (user_id, filter) for 30s, so paging through
-# results doesn't re-run COUNT(*) on every request.
-_COUNT_CACHE: dict = {}
-_COUNT_CACHE_TTL = 30.0
-
 
 def _encode_cursor(last_val, last_id: int) -> str:
     """base64(JSON) of the last row's sort value + id — opaque keyset cursor."""
@@ -117,13 +119,13 @@ def _decode_cursor(cursor: str):
 
 
 def _cached_total_count(conn, cache_key, where_sql: str, params: list) -> int:
-    """COUNT(*) of matching trades, cached per cache_key for _COUNT_CACHE_TTL seconds."""
-    now = time.monotonic()
-    cached = _COUNT_CACHE.get(cache_key)
-    if cached is not None and now - cached[0] < _COUNT_CACHE_TTL:
-        return cached[1]
+    """COUNT(*) of matching trades, cached per filter until the user's trades
+    change (cache_key[0] is the user id, see stats_cache.invalidate)."""
+    cached = stats_cache.get_count(cache_key)
+    if cached is not None:
+        return cached
     count = conn.execute("SELECT COUNT(*) FROM trades t" + where_sql, params).fetchone()[0]
-    _COUNT_CACHE[cache_key] = (now, count)
+    stats_cache.set_count(cache_key, count)
     return count
 
 
@@ -164,25 +166,75 @@ def _row_to_trade(r) -> dict:
         "coupon_frequency":   int(r[32])   if r[32] is not None else None,
         "maturity_date":      r[33],
         "accrued_interest":   float(r[34]) if r[34] is not None else 0.0,
+        "instrument_id":      r[35],
+        "sell_lot_id":        r[36],
+        # A close row records a sale of a long or a cover of a short. It can only
+        # be undone (deleted), not edited, because a sell lot depends on it.
+        "is_close":           _is_close_row(r[4], r[27] or "long"),
     }
 
 
-def _compute_commission(cur: sqlite3.Cursor, broker_id, quantity: float, override) -> float:
-    """Commission for a trade: the user override if given, else the broker's
-    flat fee + per-unit fee * quantity. Returns 0 when neither applies."""
+def _lookup_fx(conn, frm: str, to: str):
+    """Live (or fresh cached) FX rate, else the last cached one, else None."""
+    if frm == to:
+        return 1.0
+    try:
+        rate = fx_service.get_or_fetch_fx(conn, frm, to)
+    except Exception as exc:
+        logger.warning("FX fetch %s->%s failed: %s", frm, to, exc)
+        rate = None
+    return rate if rate is not None else fx_service.get_cached_fx(conn, frm, to)
+
+
+def _commission_to_trade_ccy(conn, cur: sqlite3.Cursor, amount: float, broker_ccy: str,
+                             trade_ccy: str, trade_fx: Optional[float]) -> float:
+    """Convert a broker's commission into the trade's currency. The trade's own
+    rate to the base currency (`trade_fx`) bridges the common case of a broker
+    that charges in the base currency, so no FX lookup is needed for it. Raises
+    503 when no rate is known, rather than guessing."""
+    frm = normalize_currency(broker_ccy) or "USD"
+    to = normalize_currency(trade_ccy) or "USD"
+    if not amount or frm == to:
+        return amount
+    base = _base_currency(cur)
+    if trade_fx and frm == base:
+        return amount / trade_fx
+    rate = _lookup_fx(conn, frm, to)
+    if rate is None and trade_fx:
+        to_base = _lookup_fx(conn, frm, base)
+        if to_base is not None:
+            rate = to_base / trade_fx
+    if rate is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not convert the broker commission from {frm} to {to}. "
+                   f"Enter the commission manually and try again.",
+        )
+    return amount * rate
+
+
+def _compute_commission(conn, cur: sqlite3.Cursor, broker_id, quantity: float, override,
+                        currency: Optional[str] = None, trade_fx: Optional[float] = None) -> float:
+    """Commission for a trade in the trade's `currency`: the user override if
+    given (already in that currency), else the broker's flat fee + per-unit fee *
+    quantity, converted from the broker's commission currency. `trade_fx` is the
+    trade's rate to the base currency. Returns 0 when neither applies."""
     if override is not None:
         return round(float(override), 10)
     if broker_id is None:
         return 0.0
     cur.execute(
-        "SELECT commission_flat, commission_per_unit FROM brokers WHERE id = ?",
+        "SELECT commission_flat, commission_per_unit, commission_currency FROM brokers WHERE id = ?",
         (broker_id,),
     )
     row = cur.fetchone()
     if row is None:
         return 0.0
     flat, per_unit = float(row[0] or 0), float(row[1] or 0)
-    return round(flat + per_unit * quantity, 10)
+    amount = flat + per_unit * quantity
+    if currency:
+        amount = _commission_to_trade_ccy(conn, cur, amount, row[2] or "USD", currency, trade_fx)
+    return round(amount, 10)
 
 
 def _net_total(action: str, total_value: float, commission: float) -> float:
@@ -210,13 +262,16 @@ def _base_currency(cur: sqlite3.Cursor) -> str:
     return ((vals.get("base_currency") or vals.get("currency") or "USD").strip().upper()) or "USD"
 
 
-def _resolve_fx(conn, cur: sqlite3.Cursor, trade_currency: str, override) -> float:
+def _resolve_fx(conn, cur: sqlite3.Cursor, trade_currency: str, override,
+                fallback: Optional[float] = None) -> float:
     """FX rate to convert `trade_currency` into the base currency at trade time.
 
     An explicit override wins (must be > 0); same-currency is 1.0; otherwise the
-    live/cached rate is used. If a cross-currency rate can't be fetched (offline,
-    unknown pair) we fall back to 1.0 and log it, so the trade still records — the
-    user can correct the rate via the override later."""
+    live/cached rate is used. When no fresh rate can be fetched (offline, rate
+    limited) the last cached rate of any age is used, then `fallback` (a sell or
+    cover passes its opening lot's rate). With none of those the request fails
+    with 503 asking for a manual rate. Silently storing 1.0 used to corrupt the
+    cash pool and every base-currency figure for that trade."""
     if override is not None:
         try:
             fx = float(override)
@@ -226,8 +281,9 @@ def _resolve_fx(conn, cur: sqlite3.Cursor, trade_currency: str, override) -> flo
             raise HTTPException(status_code=422, detail="fx_rate must be greater than 0.")
         return round(fx, 10)
 
+    trade_currency = (trade_currency or "").strip().upper()
     base = _base_currency(cur)
-    if (trade_currency or "").upper() == base:
+    if trade_currency == base:
         return 1.0
     try:
         rate = fx_service.get_or_fetch_fx(conn, trade_currency, base)
@@ -235,9 +291,21 @@ def _resolve_fx(conn, cur: sqlite3.Cursor, trade_currency: str, override) -> flo
         logger.warning("FX fetch %s->%s failed: %s", trade_currency, base, exc)
         rate = None
     if rate is None:
-        logger.warning("No FX rate for %s->%s; defaulting to 1.0", trade_currency, base)
-        return 1.0
-    return round(rate, 10)
+        rate = fx_service.get_cached_fx(conn, trade_currency, base)
+        if rate is not None:
+            logger.warning("Live FX %s->%s unavailable; using last cached rate %s",
+                           trade_currency, base, rate)
+    if rate is None and fallback is not None and fallback > 0:
+        logger.warning("Live FX %s->%s unavailable; using the opening lot's rate %s",
+                       trade_currency, base, fallback)
+        rate = fallback
+    if rate is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(f"Could not get an exchange rate for {trade_currency} to {base}. "
+                    f"Enter the FX rate manually and try again."),
+        )
+    return round(float(rate), 10)
 
 
 def _resolve_face_value(trade_type: str, override) -> Optional[float]:
@@ -300,12 +368,13 @@ def _require_trade(cur: sqlite3.Cursor, trade_id: int) -> tuple:
     #          6=price_per_unit 7=total_value 8=trade_date 9=notes 10=created_at
     #          11=status 12=remaining_quantity 13=broker_id 14=commission 15=multiplier
     #          16=strike_price 17=expiration_date 18=underlying 19=direction
-    #          20=trade_currency 21=fx_rate 22=accrued_interest
+    #          20=trade_currency 21=fx_rate 22=accrued_interest 23=sell_lot_id
+    #          24=instrument_id
     cur.execute(
         "SELECT id, user_id, ticker, trade_type, action, quantity, price_per_unit, "
         "total_value, trade_date, notes, created_at, status, remaining_quantity, broker_id, "
         "commission, multiplier, strike_price, expiration_date, underlying, direction, "
-        "trade_currency, fx_rate, accrued_interest "
+        "trade_currency, fx_rate, accrued_interest, sell_lot_id, instrument_id "
         "FROM trades WHERE id = ?",
         (trade_id,),
     )

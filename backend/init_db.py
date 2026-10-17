@@ -90,6 +90,8 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_sell_lots_sell_date ON sell_lots(sell_date DESC)",
     "CREATE INDEX IF NOT EXISTS idx_cash_pool_user_id ON cash_pool(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_cash_pool_user_date ON cash_pool(user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_cash_pool_reference ON cash_pool(reference_kind, reference_id)",
+    "CREATE INDEX IF NOT EXISTS idx_trades_sell_lot_id ON trades(sell_lot_id)",
     "CREATE INDEX IF NOT EXISTS idx_price_cache_symbol_source ON price_cache(symbol, source)",
     "CREATE INDEX IF NOT EXISTS idx_instruments_symbol ON instruments(symbol)",
     "CREATE INDEX IF NOT EXISTS idx_instruments_ticker ON instruments(ticker)",
@@ -336,6 +338,10 @@ def _migrate(conn):
     # (dividend, interest, fee). Splits do not move cash, so they have no type.
     _migrate_cash_pool_event_types(conn)
 
+    # Unambiguous links for close rows and cash rows. Runs last because the two
+    # table rebuilds above copy fixed column lists.
+    _migrate_close_links(conn)
+
 
 _PHASE1_TRADE_COLUMNS = [
     ("direction",        "TEXT NOT NULL DEFAULT 'long'"),
@@ -396,6 +402,116 @@ def _migrate_cash_pool_event_types(conn):
         print("Migration: rebuilt cash_pool to accept event transaction types")
     finally:
         conn.isolation_level = prev_iso
+
+
+def _is_close_row(action: str, direction: str) -> bool:
+    """A sale of a long (sell/long) or a cover of a short (buy/short). Opening
+    rows are buy/long and sell/short."""
+    return (action == "sell" and direction == "long") or (action == "buy" and direction == "short")
+
+
+def _migrate_close_links(conn):
+    """Add trades.sell_lot_id and cash_pool.reference_kind, then back-fill them.
+
+    Before these columns, a close row (the synthetic sell / cover trade) had no
+    link to the sell_lots row it records, and cash_pool.reference_id pointed at
+    either a trade id or a sell_lots id under the same transaction type. Both id
+    sequences start at 1, so deleting or editing one trade could remove another
+    trade's cash row. The back-fill below resolves existing rows as well as the
+    data allows; anything it cannot match is left NULL and treated as unlinked."""
+    cur = conn.cursor()
+    trade_cols = {r[1] for r in cur.execute("PRAGMA table_info(trades)")}
+    cash_cols = {r[1] for r in cur.execute("PRAGMA table_info(cash_pool)")}
+    added_trades = "sell_lot_id" not in trade_cols
+    added_cash = "reference_kind" not in cash_cols
+    if added_trades:
+        cur.execute("ALTER TABLE trades ADD COLUMN sell_lot_id INTEGER")
+    if added_cash:
+        cur.execute(
+            "ALTER TABLE cash_pool ADD COLUMN reference_kind TEXT "
+            "CHECK (reference_kind IN ('trade', 'sell_lot', 'event'))"
+        )
+
+    if added_trades:
+        linked = _backfill_close_row_links(cur)
+        print(f"Migration: added trades.sell_lot_id (linked {linked} close row(s))")
+    if added_cash:
+        classified = _backfill_cash_reference_kind(cur)
+        print(f"Migration: added cash_pool.reference_kind (classified {classified} row(s))")
+    conn.commit()
+
+
+def _backfill_close_row_links(cur) -> int:
+    lots = cur.execute(
+        "SELECT sl.id, sl.sell_date, sl.quantity_sold, sl.sell_price_per_unit, "
+        "t.user_id, t.ticker, t.trade_type, COALESCE(t.direction, 'long') "
+        "FROM sell_lots sl JOIN trades t ON sl.buy_trade_id = t.id ORDER BY sl.id"
+    ).fetchall()
+    linked = 0
+    for lot_id, sell_date, qty, price, user_id, ticker, trade_type, direction in lots:
+        close_action, close_dir = ("sell", "long") if direction == "long" else ("buy", "short")
+        base_sql = (
+            "SELECT id FROM trades WHERE sell_lot_id IS NULL AND user_id = ? "
+            "AND action = ? AND COALESCE(direction, 'long') = ? AND status = 'closed' "
+            "AND ABS(quantity - ?) < 1e-9 AND ABS(price_per_unit - ?) < 1e-9 "
+            "AND date(trade_date) = date(?)"
+        )
+        params = [user_id, close_action, close_dir, qty, price, sell_date]
+        # Strict match first; then without ticker/type in case the opening trade
+        # was renamed after the sale.
+        row = cur.execute(base_sql + " AND ticker = ? AND trade_type = ? ORDER BY id LIMIT 1",
+                          params + [ticker, trade_type]).fetchone()
+        if row is None:
+            row = cur.execute(base_sql + " ORDER BY id LIMIT 1", params).fetchone()
+        if row is not None:
+            cur.execute("UPDATE trades SET sell_lot_id = ? WHERE id = ?", (lot_id, row[0]))
+            linked += 1
+    return linked
+
+
+def _backfill_cash_reference_kind(cur) -> int:
+    cur.execute(
+        "UPDATE cash_pool SET reference_kind = 'event' "
+        "WHERE reference_id IS NOT NULL AND transaction_type IN ('dividend', 'interest', 'fee')"
+    )
+    classified = cur.rowcount
+    rows = cur.execute(
+        "SELECT id, user_id, transaction_type, amount, reference_id FROM cash_pool "
+        "WHERE reference_id IS NOT NULL AND transaction_type IN ('buy_deduction', 'sell_proceeds')"
+    ).fetchall()
+    for cash_id, user_id, ttype, amount, ref in rows:
+        # The opening trade this row would belong to (long open debits, short open credits).
+        open_action, open_dir = ("buy", "long") if ttype == "buy_deduction" else ("sell", "short")
+        trade = cur.execute(
+            "SELECT net_total_value, total_value, commission, COALESCE(accrued_interest, 0), "
+            "COALESCE(fx_rate, 1) FROM trades "
+            "WHERE id = ? AND user_id = ? AND action = ? AND COALESCE(direction, 'long') = ?",
+            (ref, user_id, open_action, open_dir),
+        ).fetchone()
+        # The sell lot it would belong to: a long sale credits, a short cover debits.
+        lot_dir = "long" if ttype == "sell_proceeds" else "short"
+        lot = cur.execute(
+            "SELECT sl.id FROM sell_lots sl JOIN trades t ON sl.buy_trade_id = t.id "
+            "WHERE sl.id = ? AND t.user_id = ? AND COALESCE(t.direction, 'long') = ?",
+            (ref, user_id, lot_dir),
+        ).fetchone()
+        kind = None
+        if trade and not lot:
+            kind = "trade"
+        elif lot and not trade:
+            kind = "sell_lot"
+        elif trade and lot:
+            # Both exist: the opening trade's cash amount is fully determined, so
+            # pick it only when the amount matches.
+            net, total, comm, accrued, fx = trade
+            net = net if net is not None else (total + comm if open_action == "buy" else total - comm)
+            native = net + accrued if open_action == "buy" else net - accrued
+            expected = -native * fx if open_action == "buy" else native * fx
+            kind = "trade" if abs(float(amount) - expected) < 0.005 else "sell_lot"
+        if kind:
+            cur.execute("UPDATE cash_pool SET reference_kind = ? WHERE id = ?", (kind, cash_id))
+            classified += 1
+    return classified
 
 
 def _migrate_phase1_columns(conn):

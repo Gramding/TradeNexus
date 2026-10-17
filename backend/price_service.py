@@ -4,12 +4,48 @@ import datetime
 import logging
 import re
 import sqlite3
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 # A German/European ISIN: 2-letter country code, 9 alphanumerics, 1 check digit.
 ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
+
+
+# Some exchanges quote in a currency's minor unit: Yahoo reports London listings
+# in pence ("GBp" / "GBX"), Johannesburg in cents ("ZAc") and Tel Aviv in agorot
+# ("ILA"). Prices are normalized to the major unit so a 72.5p quote is stored and
+# compared as 0.725 GBP, matching the currency trades are recorded in. The check is
+# case-sensitive on purpose: "GBP" is pounds, "GBp" is pence.
+_MINOR_CURRENCY_UNITS = {
+    "GBp": ("GBP", 100.0),
+    "GBX": ("GBP", 100.0),
+    "ZAc": ("ZAR", 100.0),
+    "ZAC": ("ZAR", 100.0),
+    "ILA": ("ILS", 100.0),
+}
+
+
+def normalize_currency(currency: Optional[str]) -> Optional[str]:
+    """Map a minor-unit currency code to its major unit ("GBp" -> "GBP") and
+    uppercase everything else. None/empty passes through."""
+    if not currency:
+        return currency
+    code = currency.strip()
+    if code in _MINOR_CURRENCY_UNITS:
+        return _MINOR_CURRENCY_UNITS[code][0]
+    return code.upper()
+
+
+def normalize_quote(price: float, currency: Optional[str]) -> tuple[float, Optional[str]]:
+    """Convert a (price, currency) quote from a minor unit to its major unit:
+    (72.5, "GBp") -> (0.725, "GBP"). Major-unit quotes come back unchanged."""
+    code = (currency or "").strip()
+    if code in _MINOR_CURRENCY_UNITS:
+        major, divisor = _MINOR_CURRENCY_UNITS[code]
+        return price / divisor, major
+    return price, normalize_currency(currency)
 
 
 # ---------------------------------------------------------------------------
@@ -41,9 +77,11 @@ class YahooFinanceSource(PriceSource):
             if price is None:
                 logger.warning("yfinance returned None price for %s", ticker)
                 return None
-            currency = getattr(t.fast_info, "currency", None) or "USD"
+            price, currency = normalize_quote(
+                float(price), getattr(t.fast_info, "currency", None) or "USD"
+            )
             return {
-                "price":    float(price),
+                "price":    price,
                 "currency": currency,
                 "source":   self.SOURCE_NAME,
             }
@@ -69,6 +107,9 @@ class YahooFinanceSource(PriceSource):
 
 _ONVISTA_UA = "Mozilla/5.0 (compatible; TradeNexus price source)"
 _ONVISTA_API_BASE = "https://api.onvista.de/api/v1"
+# Whole-lookup budget (search + snapshot). aiohttp's default is 5 minutes, which
+# froze the positions view whenever onvista stalled.
+_ONVISTA_TIMEOUT_SECONDS = 10
 
 # onvista entityType -> the path segment of its snapshot endpoint. onvista files
 # ETFs under FUND. Types not listed have no resolvable snapshot path and return None.
@@ -111,7 +152,10 @@ async def _onvista_resolve(isin: str) -> Optional[dict]:
     import aiohttp
 
     headers = {"User-Agent": _ONVISTA_UA}
-    async with aiohttp.ClientSession(headers=headers) as session:
+    timeout = aiohttp.ClientTimeout(total=_ONVISTA_TIMEOUT_SECONDS)
+    # trust_env: honor HTTP(S)_PROXY like requests/yfinance do, so onvista works
+    # on networks that route through a proxy.
+    async with aiohttp.ClientSession(headers=headers, timeout=timeout, trust_env=True) as session:
         async with session.get(
             f"{_ONVISTA_API_BASE}/instruments/search", params={"searchValue": isin}
         ) as resp:
@@ -142,9 +186,10 @@ async def _onvista_resolve(isin: str) -> Optional[dict]:
         return None
     instrument = snapshot.get("instrument") or {}
     market = quote.get("market") or {}
+    price, currency = normalize_quote(float(price), quote.get("isoCurrency") or "EUR")
     return {
-        "price":       float(price),
-        "currency":    quote.get("isoCurrency") or "EUR",
+        "price":       price,
+        "currency":    currency,
         "name":        instrument.get("name") or item.get("name"),
         "symbol":      instrument.get("symbol") or item.get("symbol"),
         "entity_type": (item.get("entityType") or "").upper(),
@@ -267,7 +312,7 @@ def search_instruments(query: str, limit: int = _SEARCH_RESULT_LIMIT) -> list[di
             "name":        q.get("longname") or q.get("shortname"),
             "exchange":    q.get("exchange"),
             "asset_class": _QUOTE_TYPE_TO_ASSET_CLASS.get(quote_type, "other"),
-            "currency":    q.get("currency") or "USD",
+            "currency":    normalize_currency(q.get("currency")) or "USD",
         })
         if len(results) >= limit:
             break
@@ -304,6 +349,41 @@ def get_price_source(source_name: str) -> PriceSource:
 # Cache-aware fetch
 # ---------------------------------------------------------------------------
 
+# Symbols whose live fetch just failed, keyed by (source, symbol) -> monotonic
+# expiry. Without this every positions load re-requests every unknown or
+# delisted symbol, which is what gets Yahoo to start rate-limiting. A forced
+# refresh (max_age_minutes=0) ignores it so the Refresh button always retries.
+_FAILURE_TTL_SECONDS = 300
+_recent_failures: dict[tuple[str, str], float] = {}
+
+
+def clear_failure_cache() -> None:
+    _recent_failures.clear()
+
+
+def _recently_failed(source_name: str, symbol: str) -> bool:
+    expiry = _recent_failures.get((source_name, symbol))
+    if expiry is None:
+        return False
+    if time.monotonic() >= expiry:
+        _recent_failures.pop((source_name, symbol), None)
+        return False
+    return True
+
+
+def _cached_row_to_result(symbol: str, source_name: str, row) -> dict:
+    # Rows cached before minor-unit normalization may still hold pence.
+    price, currency = normalize_quote(float(row[0]), row[1])
+    return {
+        "symbol":      symbol,
+        "price":       price,
+        "currency":    currency,
+        "source":      source_name,
+        "fetched_at":  row[2],
+        "from_cache":  True,
+    }
+
+
 def get_or_fetch_price(
     conn: sqlite3.Connection,
     symbol: str,
@@ -335,20 +415,17 @@ def get_or_fetch_price(
         )
         row = cur.fetchone()
         if row is not None:
-            return {
-                "symbol":      symbol,
-                "price":       float(row[0]),
-                "currency":    row[1],
-                "source":      source_name,
-                "fetched_at":  row[2],
-                "from_cache":  True,
-            }
+            return _cached_row_to_result(symbol, source_name, row)
+        if _recently_failed(source_name, symbol):
+            return None
 
     # ── Live fetch ───────────────────────────────────────────────────────────
     source = get_price_source(source_name)   # raises ValueError for unknown sources
     result = source.fetch(symbol)
     if result is None:
+        _recent_failures[(source_name, symbol)] = time.monotonic() + _FAILURE_TTL_SECONDS
         return None
+    _recent_failures.pop((source_name, symbol), None)
 
     fetched_at = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     cur.execute(
@@ -389,11 +466,4 @@ def get_cached_price(
     row = cur.fetchone()
     if row is None:
         return None
-    return {
-        "symbol":     symbol,
-        "price":      float(row[0]),
-        "currency":   row[1],
-        "source":     source_name,
-        "fetched_at": row[2],
-        "from_cache": True,
-    }
+    return _cached_row_to_result(symbol, source_name, row)
